@@ -11,16 +11,16 @@
 
   <header class="site-header">
     <nav class="navbar">
-      <div class="brand">NavRL Bench</div>
+      <a class="brand" href="index.html">NavRL Bench</a>
 
       <div class="nav-right">
         <div class="nav-links">
-          <a href="#overview">Overview</a>
-          <a href="#pipeline">Pipeline</a>
-          <a href="#training">RL Training</a>
-          <a href="#controllers">Controllers</a>
-          <a href="#benchmark">Benchmark</a>
-          <a href="#results">Results</a>
+          <a href="index.html#overview">Overview</a>
+          <a href="index.html#pipeline">Pipeline</a>
+          <a href="rl-training.html">RL Training</a>
+          <a href="index.html#controllers">Controllers</a>
+          <a href="index.html#benchmark">Benchmark</a>
+          <a href="index.html#results">Results</a>
         </div>
 
         <label class="theme-control" for="themeSelect">
@@ -46,7 +46,7 @@
         </p>
         <div class="hero-actions">
           <a class="btn primary" href="https://github.com/pavansai018/navrl-bench" target="_blank" rel="noopener noreferrer">View On GitHub</a>
-          <a class="btn secondary" href="#pipeline">Project Pipeline</a>
+          <a class="btn secondary" href="rl-training.html">Explore RL Training</a>
         </div>
       </div>
     </section>
@@ -109,7 +109,7 @@
         <div class="pipe-arrow">↓</div>
         <div class="pipe-step">Integrate as Nav2 Local Controller</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step">Benchmark Against DWB, MPPI, and RPP</div>
+        <div class="pipe-step">Benchmark Against Classical Nav2 Controllers</div>
         <div class="pipe-arrow">↓</div>
         <div class="pipe-step">Metric-Based Evaluation</div>
       </div>
@@ -117,64 +117,24 @@
 
     <section id="training" class="section">
       <div class="section-header">
-        <p class="section-tag">RL Training Module</p>
-        <h2>Training policies from scratch</h2>
+        <p class="section-tag">Dedicated RL Training Work</p>
+        <h2>RL training is a core contribution, not just a comparison item</h2>
       </div>
 
-      <div class="grid three">
-        <article class="info-card">
-          <h3>Training Platform</h3>
+      <div class="feature-card">
+        <div>
+          <h3>Training policies from scratch in IsaacLab / Isaac Sim</h3>
           <p>
-            RL policies are trained in simulation using IsaacLab / Isaac Sim with a TurtleBot3-based
-            navigation environment.
+            The RL part of this project includes environment design, observation design, action design,
+            reward shaping, PPO training, policy export, and deployment into the Nav2 local control pipeline.
           </p>
-        </article>
-
-        <article class="info-card">
-          <h3>Learning Algorithm</h3>
           <p>
-            The initial policy training focuses on PPO. Additional RL algorithms can be added later
-            for extended comparison.
+            A separate training page documents this pipeline clearly so the project does not look like
+            only a comparison between existing controllers.
           </p>
-        </article>
-
-        <article class="info-card">
-          <h3>Policy Output</h3>
-          <p>
-            The trained policy outputs velocity commands that can be used by the robot as local
-            navigation actions.
-          </p>
-        </article>
-      </div>
-
-      <div class="training-details">
-        <div class="detail-card">
-          <h3>Possible Observations</h3>
-          <ul>
-            <li>Robot linear and angular velocity</li>
-            <li>Goal direction and goal distance</li>
-            <li>Laser scan or local obstacle representation</li>
-            <li>Previous action</li>
-            <li>Local path information if used</li>
-          </ul>
         </div>
-
-        <div class="detail-card">
-          <h3>Possible Rewards</h3>
-          <ul>
-            <li>Reward for moving toward the goal</li>
-            <li>Reward for reaching the goal</li>
-            <li>Penalty for collision</li>
-            <li>Penalty for unsafe obstacle distance</li>
-            <li>Penalty for excessive stopping</li>
-            <li>Penalty for jerky velocity commands</li>
-          </ul>
-        </div>
+        <a class="btn primary" href="rl-training.html">More on RL Training</a>
       </div>
-
-      <p class="note">
-        The exact observation space, action space, reward design, and training configuration will be documented as part of the implementation.
-      </p>
     </section>
 
     <section id="controllers" class="section">
@@ -184,37 +144,10 @@
       </div>
 
       <div class="grid four">
-        <article class="controller-card">
-          <h3>DWB Controller</h3>
-          <p>
-            A classical Nav2 local controller based on the Dynamic Window Approach. It generates
-            velocity commands by evaluating possible robot motions using critic functions.
-          </p>
-        </article>
-
-        <article class="controller-card">
-          <h3>MPPI Controller</h3>
-          <p>
-            A predictive sampling-based controller that evaluates multiple candidate trajectories
-            and selects the best control action based on cost.
-          </p>
-        </article>
-
-        <article class="controller-card">
-          <h3>Regulated Pure Pursuit</h3>
-          <p>
-            A path tracking controller that follows the global path while regulating speed based on
-            curvature and collision constraints.
-          </p>
-        </article>
-
-        <article class="controller-card highlight">
-          <h3>Trained RL Policy</h3>
-          <p>
-            A reinforcement learning based local controller trained from scratch in IsaacLab /
-            Isaac Sim and integrated into the navigation pipeline.
-          </p>
-        </article>
+        <article class="controller-card"><h3>DWB Controller</h3><p>A classical Nav2 local controller based on the Dynamic Window Approach. It generates velocity commands by evaluating possible robot motions using critic functions.</p></article>
+        <article class="controller-card"><h3>MPPI Controller</h3><p>A predictive sampling-based controller that evaluates multiple candidate trajectories and selects the best control action based on cost.</p></article>
+        <article class="controller-card"><h3>Regulated Pure Pursuit</h3><p>A path tracking controller that follows the global path while regulating speed based on curvature and collision constraints.</p></article>
+        <article class="controller-card highlight"><h3>Trained RL Policy</h3><p>A reinforcement learning based local controller trained from scratch in IsaacLab / Isaac Sim and integrated into the navigation pipeline.</p></article>
       </div>
     </section>
 
@@ -225,29 +158,17 @@
       </div>
 
       <div class="architecture-box">
-        <div class="arch-step">Map + Goal</div>
-        <div class="arch-arrow">↓</div>
-        <div class="arch-step">Nav2 Global Planner</div>
-        <div class="arch-arrow">↓</div>
-        <div class="arch-step">Global Path</div>
-        <div class="arch-arrow">↓</div>
-        <div class="arch-step active">Local Controller: DWB / MPPI / RPP / Trained RL Policy</div>
-        <div class="arch-arrow">↓</div>
-        <div class="arch-step">/cmd_vel</div>
-        <div class="arch-arrow">↓</div>
+        <div class="arch-step">Map + Goal</div><div class="arch-arrow">↓</div>
+        <div class="arch-step">Nav2 Global Planner</div><div class="arch-arrow">↓</div>
+        <div class="arch-step">Global Path</div><div class="arch-arrow">↓</div>
+        <div class="arch-step active">Local Controller: DWB / MPPI / RPP / Trained RL Policy</div><div class="arch-arrow">↓</div>
+        <div class="arch-step">/cmd_vel</div><div class="arch-arrow">↓</div>
         <div class="arch-step">TurtleBot3</div>
       </div>
 
       <div class="content-card narrow">
-        <p>
-          The global planner remains unchanged. This keeps the benchmark focused on local navigation
-          behavior such as obstacle avoidance, slowing down, choosing local detours, and recovering
-          from temporary blockages.
-        </p>
-        <p>
-          The RL policy replaces only the local controller block, allowing it to be directly compared
-          with DWB, MPPI, and Regulated Pure Pursuit.
-        </p>
+        <p>The global planner remains unchanged. This keeps the benchmark focused on local navigation behavior such as obstacle avoidance, slowing down, choosing local detours, and recovering from temporary blockages.</p>
+        <p>The RL policy replaces only the local controller block, allowing it to be directly compared with classical Nav2 local controllers.</p>
       </div>
     </section>
 
@@ -258,41 +179,12 @@
       </div>
 
       <div class="grid three">
-        <article class="scenario-card">
-          <span>01</span>
-          <h3>Static Obstacle Navigation</h3>
-          <p>The robot navigates around fixed obstacles in the environment.</p>
-        </article>
-
-        <article class="scenario-card">
-          <span>02</span>
-          <h3>Dynamic Obstacle Crossing</h3>
-          <p>A moving obstacle crosses the robot’s planned path.</p>
-        </article>
-
-        <article class="scenario-card">
-          <span>03</span>
-          <h3>Temporary Path Blockage</h3>
-          <p>An obstacle temporarily blocks the path, forcing the robot to wait, slow down, or choose another local motion.</p>
-        </article>
-
-        <article class="scenario-card">
-          <span>04</span>
-          <h3>Narrow Passage Navigation</h3>
-          <p>The robot navigates through a narrow passage where local control decisions are important.</p>
-        </article>
-
-        <article class="scenario-card">
-          <span>05</span>
-          <h3>Cluttered Indoor Navigation</h3>
-          <p>The robot navigates in an indoor environment with multiple obstacles and changing local conditions.</p>
-        </article>
-
-        <article class="scenario-card">
-          <span>06</span>
-          <h3>Repeated Trials</h3>
-          <p>Each controller is tested multiple times under the same scenario setup for fair comparison.</p>
-        </article>
+        <article class="scenario-card"><span>01</span><h3>Static Obstacle Navigation</h3><p>The robot navigates around fixed obstacles in the environment.</p></article>
+        <article class="scenario-card"><span>02</span><h3>Dynamic Obstacle Crossing</h3><p>A moving obstacle crosses the robot's planned path.</p></article>
+        <article class="scenario-card"><span>03</span><h3>Temporary Path Blockage</h3><p>An obstacle temporarily blocks the path, forcing the robot to wait, slow down, or choose another local motion.</p></article>
+        <article class="scenario-card"><span>04</span><h3>Narrow Passage Navigation</h3><p>The robot navigates through a narrow passage where local control decisions are important.</p></article>
+        <article class="scenario-card"><span>05</span><h3>Cluttered Indoor Navigation</h3><p>The robot navigates in an indoor environment with multiple obstacles and changing local conditions.</p></article>
+        <article class="scenario-card"><span>06</span><h3>Repeated Trials</h3><p>Each controller is tested multiple times under the same scenario setup for fair comparison.</p></article>
       </div>
     </section>
 
@@ -303,32 +195,16 @@
       </div>
 
       <div class="metrics-grid">
-        <div>Success Rate</div>
-        <div>Time to Goal</div>
-        <div>Path Length</div>
-        <div>Number of Stops</div>
-        <div>Collision Count</div>
-        <div>Minimum Obstacle Distance</div>
-        <div>Velocity Smoothness</div>
-        <div>Recovery Behavior</div>
+        <div>Success Rate</div><div>Time to Goal</div><div>Path Length</div><div>Number of Stops</div>
+        <div>Collision Count</div><div>Minimum Obstacle Distance</div><div>Velocity Smoothness</div><div>Recovery Behavior</div>
       </div>
     </section>
 
     <section class="section two-column">
-      <div>
-        <p class="section-tag">Benchmark Principle</p>
-        <h2>No unfair comparison</h2>
-      </div>
+      <div><p class="section-tag">Benchmark Principle</p><h2>No unfair comparison</h2></div>
       <div class="content-card">
-        <p>
-          Classical controllers are used as available Nav2 baselines. RL policies are trained from
-          scratch by this project and then evaluated under the same test setup.
-        </p>
-        <p>
-          The project does not assume that RL will always perform better. The goal is to measure
-          where classical control performs well, where it struggles, and whether trained RL policies
-          provide better adaptability in dynamic obstacle scenarios.
-        </p>
+        <p>Classical controllers are used as available Nav2 baselines. RL policies are trained from scratch by this project and then evaluated under the same test setup.</p>
+        <p>The project does not assume that RL will always perform better. The goal is to measure where classical control performs well, where it struggles, and whether trained RL policies provide better adaptability in dynamic obstacle scenarios.</p>
       </div>
     </section>
 
@@ -340,120 +216,53 @@
 
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr>
-              <th>Controller / Policy</th>
-              <th>Type</th>
-              <th>Training Required</th>
-              <th>Output</th>
-              <th>Success Rate</th>
-              <th>Stops</th>
-              <th>Collisions</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Controller / Policy</th><th>Type</th><th>Training Required</th><th>Output</th><th>Success Rate</th><th>Stops</th><th>Collisions</th></tr></thead>
           <tbody>
-            <tr>
-              <td>DWB</td>
-              <td>Classical</td>
-              <td>No</td>
-              <td>/cmd_vel</td>
-              <td>-</td>
-              <td>-</td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>MPPI</td>
-              <td>Classical</td>
-              <td>No</td>
-              <td>/cmd_vel</td>
-              <td>-</td>
-              <td>-</td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>Regulated Pure Pursuit</td>
-              <td>Classical</td>
-              <td>No</td>
-              <td>/cmd_vel</td>
-              <td>-</td>
-              <td>-</td>
-              <td>-</td>
-            </tr>
-            <tr>
-              <td>PPO RL Policy</td>
-              <td>Learned</td>
-              <td>Yes</td>
-              <td>/cmd_vel</td>
-              <td>-</td>
-              <td>-</td>
-              <td>-</td>
-            </tr>
+            <tr><td>DWB</td><td>Classical</td><td>No</td><td>/cmd_vel</td><td>-</td><td>-</td><td>-</td></tr>
+            <tr><td>MPPI</td><td>Classical</td><td>No</td><td>/cmd_vel</td><td>-</td><td>-</td><td>-</td></tr>
+            <tr><td>Regulated Pure Pursuit</td><td>Classical</td><td>No</td><td>/cmd_vel</td><td>-</td><td>-</td><td>-</td></tr>
+            <tr><td>PPO RL Policy</td><td>Learned</td><td>Yes</td><td>/cmd_vel</td><td>-</td><td>-</td><td>-</td></tr>
           </tbody>
         </table>
       </div>
 
-      <p class="note">
-        Benchmark results, plots, and demo videos will be added after controlled experiments are completed.
-      </p>
+      <p class="note">Benchmark results, plots, and demo videos will be added after controlled experiments are completed.</p>
     </section>
 
     <section class="section">
-      <div class="section-header">
-        <p class="section-tag">Tech Stack</p>
-        <h2>Tools and Platform</h2>
-      </div>
-
+      <div class="section-header"><p class="section-tag">Tech Stack</p><h2>Tools and Platform</h2></div>
       <div class="tech-list">
-        <span>TurtleBot3</span>
-        <span>ROS 2</span>
-        <span>Nav2</span>
-        <span>DWB</span>
-        <span>MPPI</span>
-        <span>Regulated Pure Pursuit</span>
-        <span>IsaacLab</span>
-        <span>Isaac Sim</span>
-        <span>PPO</span>
-        <span>Reinforcement Learning</span>
-        <span>Gazebo</span>
-        <span>RViz</span>
-        <span>Python</span>
+        <span>TurtleBot3</span><span>ROS 2</span><span>Nav2</span><span>DWB</span><span>MPPI</span><span>Regulated Pure Pursuit</span><span>IsaacLab</span><span>Isaac Sim</span><span>PPO</span><span>Reinforcement Learning</span><span>Gazebo</span><span>RViz</span><span>Python</span>
       </div>
     </section>
-
   </main>
 
-  <!-- <footer class="footer">
-    <p>NavRL Bench · RL Training and Nav2 Controller Benchmarking</p>
-    <a class="btn primary" href="https://www.linkedin.com/in/pavansai18/">Pavan Sai</a>
-    <a class="btn primary" href="https://www.linkedin.com/in/sivaalamkaram2002/">Siva</a>
-  </footer> -->
   <footer class="footer">
-  <div class="footer-inner">
-    <div class="footer-brand">
-      <h3>NavRL Bench</h3>
-      <p>RL training and Nav2 controller benchmarking for TurtleBot3 dynamic navigation.</p>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <h3>NavRL Bench</h3>
+        <p>RL training and Nav2 controller benchmarking for TurtleBot3 dynamic navigation.</p>
+      </div>
+
+      <div class="footer-contributors">
+        <p class="footer-title">Project Contributors</p>
+
+        <div class="contributor-list">
+          <a href="https://www.linkedin.com/in/pavansai18/" target="_blank" rel="noopener noreferrer">
+            Pavan Sai
+          </a>
+
+          <a href="https://www.linkedin.com/in/sivaalamkaram2002/" target="_blank" rel="noopener noreferrer">
+            Siva
+          </a>
+        </div>
+      </div>
     </div>
 
-    <div class="footer-contributors">
-  <p class="footer-title">Project Contributors</p>
-
-  <div class="contributor-list">
-    <a href="https://www.linkedin.com/in/pavansai18/" target="_blank" rel="noopener noreferrer">
-      Pavan Sai
-    </a>
-
-    <a href="https://www.linkedin.com/in/sivaalamkaram2002/" target="_blank" rel="noopener noreferrer">
-      Siva
-    </a>
-  </div>
-</div>
+    <div class="footer-bottom">
+      <p>© 2026 NavRL Bench. Built for robotics navigation research and benchmarking.</p>
     </div>
-  </div>
-
-  <div class="footer-bottom">
-    <p>© 2026 NavRL Bench. Built for robotics navigation research and benchmarking.</p>
-  </div>
-</footer>
+  </footer>
 
   <script src="script.js"></script>
 </body>

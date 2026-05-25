@@ -1,0 +1,5 @@
+**.ipynb: linguist-vendored
+**.stl: linguist-vendored
+**.STL: linguist-vendored
+**.dae: linguist-vendored
+**.DAE: linguist-vendored

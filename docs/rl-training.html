@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="modern">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RL Training | NavRL Bench</title>
+  <meta name="description" content="Dedicated RL training page for NavRL Bench, covering IsaacLab training environment, PPO policy design, observations, actions, rewards, policy export, and Nav2 integration." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="site-header page-header">
+    <nav class="navbar">
+      <a class="brand" href="index.html">NavRL Bench</a>
+
+      <div class="nav-right">
+        <div class="nav-links">
+          <a href="index.html#overview">Overview</a>
+          <a href="index.html#pipeline">Pipeline</a>
+          <a href="rl-training.html">RL Training</a>
+          <a href="index.html#controllers">Controllers</a>
+          <a href="index.html#benchmark">Benchmark</a>
+          <a href="index.html#results">Results</a>
+        </div>
+
+        <label class="theme-control" for="themeSelect">
+          <span>Theme</span>
+          <select id="themeSelect" aria-label="Select website theme">
+            <option value="modern">Modern</option>
+            <option value="industrial">Industrial</option>
+            <option value="academic">Academic</option>
+            <option value="classic">Classic</option>
+          </select>
+        </label>
+      </div>
+    </nav>
+
+    <section class="hero compact-hero">
+      <div class="hero-content">
+        <p class="eyebrow">Dedicated RL Training Page</p>
+        <h1>Training the RL Local Navigation Policy from Scratch</h1>
+        <p class="hero-text">
+          This page documents the learning component of NavRL Bench: training a PPO-based local navigation
+          policy in IsaacLab / Isaac Sim, exporting the trained policy, and integrating it into the Nav2
+          local controller pipeline.
+        </p>
+        <div class="hero-actions">
+          <a class="btn primary" href="index.html">Back to Project Home</a>
+          <a class="btn secondary" href="#training-pipeline">Training Pipeline</a>
+        </div>
+      </div>
+    </section>
+  </header>
+
+  <main>
+
+    <section class="section">
+      <div class="section-header">
+        <p class="section-tag">Why this page exists</p>
+        <h2>RL training is the main engineering contribution</h2>
+      </div>
+
+      <div class="content-card">
+        <p>
+          The classical controllers are available Nav2 baselines. The RL controller is different because it is
+          trained from scratch as part of this project.
+        </p>
+        <p>
+          This page separates the RL training work from the benchmark page so that the project clearly shows
+          environment design, policy training, reward shaping, policy export, and deployment planning.
+        </p>
+      </div>
+    </section>
+
+    <section id="training-pipeline" class="section">
+      <div class="section-header">
+        <p class="section-tag">Training Pipeline</p>
+        <h2>From simulation environment to deployable policy</h2>
+      </div>
+
+      <div class="pipeline-box large-pipeline">
+        <div class="pipe-step">Create TurtleBot3 training environment</div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step">Define observation space</div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step">Define velocity action space</div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step active">Train PPO policy from scratch</div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step">Validate policy in simulation</div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step">Export trained policy</div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step">Load policy inside Nav2 local controller interface</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <p class="section-tag">Training Environment</p>
+        <h2>IsaacLab / Isaac Sim setup</h2>
+      </div>
+
+      <div class="grid three">
+        <article class="info-card"><h3>Robot</h3><p>TurtleBot3 is used as the robot platform for training and benchmark consistency.</p></article>
+        <article class="info-card"><h3>Environment</h3><p>The training environment is designed around local navigation tasks, obstacle avoidance, and goal-directed movement.</p></article>
+        <article class="info-card"><h3>Training Goal</h3><p>The policy should learn to output safe and useful velocity commands for local navigation.</p></article>
+      </div>
+    </section>
+
+    <section class="section two-column">
+      <div>
+        <p class="section-tag">Policy Interface</p>
+        <h2>Observation and action design</h2>
+      </div>
+
+      <div class="training-details single-column">
+        <div class="detail-card">
+          <h3>Planned Observation Inputs</h3>
+          <ul>
+            <li>Goal direction relative to the robot</li>
+            <li>Goal distance</li>
+            <li>Robot linear velocity</li>
+            <li>Robot angular velocity</li>
+            <li>Laser scan or compact local obstacle representation</li>
+            <li>Previous action for smoother behavior</li>
+            <li>Optional local path information from Nav2</li>
+          </ul>
+        </div>
+
+        <div class="detail-card">
+          <h3>Planned Action Output</h3>
+          <ul>
+            <li>Linear velocity command</li>
+            <li>Angular velocity command</li>
+            <li>Action limits matched to TurtleBot3 safety limits</li>
+            <li>Output format compatible with <code>/cmd_vel</code></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <p class="section-tag">Reward Design</p>
+        <h2>Training signal for navigation behavior</h2>
+      </div>
+
+      <div class="reward-grid">
+        <article class="reward-card positive">
+          <h3>Positive Rewards</h3>
+          <ul>
+            <li>Progress toward goal</li>
+            <li>Reaching the goal</li>
+            <li>Maintaining useful forward motion</li>
+            <li>Following safe local navigation behavior</li>
+          </ul>
+        </article>
+
+        <article class="reward-card negative">
+          <h3>Penalties</h3>
+          <ul>
+            <li>Collision with obstacles</li>
+            <li>Getting too close to obstacles</li>
+            <li>Unnecessary stopping</li>
+            <li>Moving away from the goal</li>
+            <li>Jerky or unstable velocity commands</li>
+          </ul>
+        </article>
+      </div>
+
+      <p class="note">
+        Reward terms will be updated based on training experiments. The final reward design will be documented with configuration files and ablation notes.
+      </p>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <p class="section-tag">Training Strategy</p>
+        <h2>Making the policy robust before benchmarking</h2>
+      </div>
+
+      <div class="grid three">
+        <article class="scenario-card"><span>01</span><h3>Simple Goal Reaching</h3><p>The policy first learns basic movement toward a goal without complex obstacles.</p></article>
+        <article class="scenario-card"><span>02</span><h3>Static Obstacle Avoidance</h3><p>The environment introduces fixed obstacles so the policy learns safe local detours.</p></article>
+        <article class="scenario-card"><span>03</span><h3>Dynamic Obstacles</h3><p>Moving obstacles are added to evaluate adaptive behavior such as slowing, passing, or avoiding.</p></article>
+        <article class="scenario-card"><span>04</span><h3>Domain Randomization</h3><p>Training can randomize obstacle placement, start-goal pairs, friction, and sensor noise.</p></article>
+        <article class="scenario-card"><span>05</span><h3>Policy Validation</h3><p>The trained policy is tested in simulation before it is compared with Nav2 classical controllers.</p></article>
+        <article class="scenario-card"><span>06</span><h3>Export and Integration</h3><p>The final policy is exported and loaded by the RL local controller for benchmark evaluation.</p></article>
+      </div>
+    </section>
+
+    <section class="section two-column">
+      <div>
+        <p class="section-tag">Training Outputs</p>
+        <h2>What this module should produce</h2>
+      </div>
+
+      <div class="content-card">
+        <p>The RL training module should produce trained policy checkpoints, exported deployable policy files, training curves, reward logs, validation videos, and configuration files.</p>
+        <p>These outputs make the project reproducible and show that the RL controller was trained as part of the project instead of being treated as a black-box replacement.</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <p class="section-tag">Planned Artifacts</p>
+        <h2>Files and results to publish</h2>
+      </div>
+
+      <div class="metrics-grid">
+        <div>Training config</div><div>Reward config</div><div>Policy checkpoints</div><div>Exported policy</div>
+        <div>Training curves</div><div>Validation videos</div><div>Failure cases</div><div>Ablation notes</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <p class="section-tag">Connection to Benchmark</p>
+        <h2>How the trained policy is evaluated</h2>
+      </div>
+
+      <div class="content-card">
+        <p>After training, the policy is integrated as a local controller and evaluated against classical Nav2 controllers under the same TurtleBot3 benchmark scenarios.</p>
+        <p>This keeps the final comparison fair: classical controllers use their Nav2 implementations, while the RL controller uses the trained policy produced by this training pipeline.</p>
+      </div>
+
+      <div class="hero-actions section-actions">
+        <a class="btn primary" href="index.html#results">View Benchmark Table</a>
+        <a class="btn secondary" href="index.html#controllers">View Controller Baselines</a>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <h3>NavRL Bench</h3>
+        <p>RL training and Nav2 controller benchmarking for TurtleBot3 dynamic navigation.</p>
+      </div>
+
+      <div class="footer-contributors">
+        <p class="footer-title">Project Contributors</p>
+
+        <div class="contributor-list">
+          <a href="https://www.linkedin.com/in/pavansai18/" target="_blank" rel="noopener noreferrer">
+            Pavan Sai
+          </a>
+
+          <a href="https://www.linkedin.com/in/sivaalamkaram2002/" target="_blank" rel="noopener noreferrer">
+            Siva
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <p>© 2026 NavRL Bench. Built for robotics navigation research and benchmarking.</p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

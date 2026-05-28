@@ -1,4 +1,10 @@
 # NavRL Bench
+[![IsaacSim](https://img.shields.io/badge/IsaacSim-5.1.0-silver.svg)](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html)
+[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://docs.python.org/3/whatsnew/3.11.html)
+[![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/22.04/)
+[![Windows platform](https://img.shields.io/badge/platform-windows--64-orange.svg)](https://www.microsoft.com/en-us/)
+[![License](https://img.shields.io/badge/license-BSD--3-yellow.svg)](https://opensource.org/licenses/BSD-3-Clause)
+
 
 **RL-Based Dynamic Obstacle Avoidance for ROSMASTER M3 Navigation**
 
@@ -337,4 +343,4 @@ Current focus:
 
 ## License
 
-This repository is intended for academic and research purposes. License details will be updated as the project matures.
+This project is licensed under the BSD 3-Clause License – see the [LICENSE](LICENSE) file for details.

@@ -4,10 +4,15 @@ on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
 
 jobs:
   pr-check:
+    name: PR Check
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout PR code
         uses: actions/checkout@v4

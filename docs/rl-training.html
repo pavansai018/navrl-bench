@@ -36,13 +36,14 @@
     </nav>
 
     <section class="hero compact-hero">
+      <img class="hero-robot-bg" src="assets/m3.jpeg" alt="ROSMASTER M3 robot" />
       <div class="hero-content">
         <p class="eyebrow">Dedicated RL Training Page</p>
-        <h1>Training the RL Local Navigation Policy from Scratch</h1>
+        <h1>Training the RL Dynamic-Obstacle Avoidance Policy from Scratch</h1>
         <p class="hero-text">
-          This page documents the learning component of NavRL Bench: training a PPO-based local navigation
-          policy in IsaacLab / Isaac Sim, exporting the trained policy, and integrating it into the Nav2
-          local controller pipeline.
+          This page documents the learning component of NavRL Bench: training a PPO-based local navigation policy for dynamic-obstacle avoidance
+          in IsaacLab / Isaac Sim, exporting the trained policy, and integrating it into the ROS2 / Nav2
+          local control pipeline.
         </p>
         <div class="hero-actions">
           <a class="btn primary" href="index.html">Back to Project Home</a>
@@ -79,7 +80,7 @@
       </div>
 
       <div class="pipeline-box large-pipeline">
-        <div class="pipe-step">Create TurtleBot3 training environment</div>
+        <div class="pipe-step">Create ROSMASTER M3 training environment</div>
         <div class="pipe-arrow">↓</div>
         <div class="pipe-step">Define observation space</div>
         <div class="pipe-arrow">↓</div>
@@ -102,9 +103,9 @@
       </div>
 
       <div class="grid three">
-        <article class="info-card"><h3>Robot</h3><p>TurtleBot3 is used as the robot platform for training and benchmark consistency.</p></article>
-        <article class="info-card"><h3>Environment</h3><p>The training environment is designed around local navigation tasks, obstacle avoidance, and goal-directed movement.</p></article>
-        <article class="info-card"><h3>Training Goal</h3><p>The policy should learn to output safe and useful velocity commands for local navigation.</p></article>
+        <article class="info-card"><h3>Robot</h3><p>ROSMASTER M3 is used as the robot platform for training and benchmark consistency.</p></article>
+        <article class="info-card"><h3>Environment</h3><p>The training environment is designed around dynamic obstacle avoidance and goal-directed movement.</p></article>
+        <article class="info-card"><h3>Training Goal</h3><p>The policy should learn to output safe and useful velocity commands for avoiding dynamic obstacles while navigating toward the goal.</p></article>
       </div>
     </section>
 
@@ -133,7 +134,7 @@
           <ul>
             <li>Linear velocity command</li>
             <li>Angular velocity command</li>
-            <li>Action limits matched to TurtleBot3 safety limits</li>
+            <li>Action limits matched to ROSMASTER M3 safety limits</li>
             <li>Output format compatible with <code>/cmd_vel</code></li>
           </ul>
         </div>
@@ -177,8 +178,10 @@
     <section class="section">
       <div class="section-header">
         <p class="section-tag">Training Strategy</p>
-        <h2>Making the policy robust before benchmarking</h2>
+        <h2>Curriculum toward fast dynamic-obstacle avoidance</h2>
       </div>
+
+      <p class="note">The final target is fast dynamic-obstacle avoidance. Simple goal reaching and static obstacles are used as curriculum stages before introducing moving obstacles.</p>
 
       <div class="grid three">
         <article class="scenario-card"><span>01</span><h3>Simple Goal Reaching</h3><p>The policy first learns basic movement toward a goal without complex obstacles.</p></article>
@@ -229,7 +232,7 @@
       </div>
 
       <div class="content-card">
-        <p>After training, the policy is integrated as a local controller and evaluated against classical Nav2 controllers under the same TurtleBot3 benchmark scenarios.</p>
+        <p>After training, the policy is integrated into the ROS2 / Nav2 local-control pipeline and evaluated against classical Nav2 controllers under the same ROSMASTER M3 benchmark scenarios.</p>
         <p>This keeps the final comparison fair: classical controllers use their Nav2 implementations, while the RL controller uses the trained policy produced by this training pipeline.</p>
       </div>
 
@@ -245,7 +248,7 @@
     <div class="footer-inner">
       <div class="footer-brand">
         <h3>NavRL Bench</h3>
-        <p>RL training and Nav2 controller benchmarking for TurtleBot3 dynamic navigation.</p>
+        <p>RL-based dynamic obstacle avoidance and Nav2 controller benchmarking for ROSMASTER M3.</p>
       </div>
 
       <div class="footer-contributors">

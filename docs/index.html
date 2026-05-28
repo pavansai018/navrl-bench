@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NavRL Bench | RL Training and Nav2 Controller Benchmark</title>
-  <meta name="description" content="NavRL Bench trains RL-based local navigation policies from scratch in IsaacLab / Isaac Sim and benchmarks them against classical Nav2 controllers using TurtleBot3." />
+  <title>NavRL Bench | Dynamic Obstacle Avoidance Benchmark</title>
+  <meta name="description" content="NavRL Bench trains an RL-based local controller for ROSMASTER M3 to reach a given goal while avoiding fast-moving dynamic obstacles, then benchmarks it against classical Nav2 controllers." />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -36,13 +36,15 @@
     </nav>
 
     <section class="hero">
+      <img class="hero-robot-bg" src="assets/m3.jpeg" alt="ROSMASTER M3 robot" />
       <div class="hero-content">
-        <p class="eyebrow">TurtleBot3 · ROS 2 · Nav2 · IsaacLab · Reinforcement Learning</p>
-        <h1>Training RL-Based Local Navigation and Benchmarking Against Nav2 Controllers</h1>
+        <p class="eyebrow">ROSMASTER M3 · ROS 2 · Nav2 · IsaacLab · Reinforcement Learning</p>
+        <h1>RL-Based Dynamic Obstacle Avoidance for ROSMASTER M3 Navigation</h1>
+        <p class="hero-subtitle">Given a goal, the robot should avoid fast-moving obstacles and reach the goal safely.</p>
         <p class="hero-text">
-          NavRL Bench trains reinforcement learning policies from scratch using IsaacLab / Isaac Sim
-          and compares the trained RL local controller against classical Nav2 controllers such as
-          DWB, MPPI, and Regulated Pure Pursuit.
+          NavRL Bench trains a reinforcement-learning-based local controller from scratch in IsaacLab / Isaac Sim
+          and compares the trained policy against classical Nav2 controllers such as
+          DWB, MPPI, and RPP under controlled dynamic-obstacle scenarios.
         </p>
         <div class="hero-actions">
           <a class="btn primary" href="https://github.com/pavansai018/navrl-bench" target="_blank" rel="noopener noreferrer">View On GitHub</a>
@@ -62,13 +64,12 @@
 
       <div class="content-card">
         <p>
-          NavRL Bench is a robotics navigation project that combines reinforcement learning training
-          and Nav2 controller benchmarking.
+          NavRL Bench is a robotics project focused on goal-directed navigation in dynamic environments.
         </p>
         <p>
-          The project trains RL-based local navigation policies from scratch using IsaacLab / Isaac Sim.
-          The trained policies are then integrated into a TurtleBot3 navigation pipeline and compared
-          against classical Nav2 local controllers including DWB, MPPI, and Regulated Pure Pursuit.
+          The project trains an RL-based local controller from scratch using IsaacLab / Isaac Sim.
+          The trained policy is then integrated into a ROSMASTER M3 navigation pipeline and compared
+          against classical Nav2 local controllers including DWB, MPPI, and RPP.
         </p>
       </div>
     </section>
@@ -81,13 +82,12 @@
       <div class="content-card">
         <p>
           Classical Nav2 controllers are reliable and widely used for mobile robot navigation.
-          However, in dynamic obstacle scenarios, they can become conservative, stop frequently,
-          or struggle to produce adaptive local avoidance behavior.
+          However, when fast-moving obstacles repeatedly cross the robot path, they can become conservative,
+          stop frequently, or struggle to maintain smooth progress toward the goal.
         </p>
         <p>
-          This project investigates whether reinforcement learning policies trained from scratch
-          can learn more adaptive local navigation behavior and how their performance compares
-          with established Nav2 controllers under the same test conditions.
+          This project investigates whether a reinforcement-learning-based local controller trained from scratch
+          can learn more adaptive dynamic-obstacle avoidance behavior while still reaching the assigned goal safely.
         </p>
       </div>
     </section>
@@ -99,15 +99,15 @@
       </div>
 
       <div class="pipeline-box">
-        <div class="pipe-step">TurtleBot3 Robot Model</div>
+        <div class="pipe-step">ROSMASTER M3 Robot Model</div>
         <div class="pipe-arrow">↓</div>
         <div class="pipe-step">IsaacLab / Isaac Sim Training Environment</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step active">Train RL Policy from Scratch</div>
+        <div class="pipe-step active">Train RL Dynamic Avoidance Policy</div>
         <div class="pipe-arrow">↓</div>
         <div class="pipe-step">Export Trained Policy</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step">Integrate as Nav2 Local Controller</div>
+        <div class="pipe-step">Integrate into ROS2 / Nav2 Local Control Pipeline</div>
         <div class="pipe-arrow">↓</div>
         <div class="pipe-step">Benchmark Against Classical Nav2 Controllers</div>
         <div class="pipe-arrow">↓</div>
@@ -163,7 +163,7 @@
         <div class="arch-step">Global Path</div><div class="arch-arrow">↓</div>
         <div class="arch-step active">Local Controller: DWB / MPPI / RPP / Trained RL Policy</div><div class="arch-arrow">↓</div>
         <div class="arch-step">/cmd_vel</div><div class="arch-arrow">↓</div>
-        <div class="arch-step">TurtleBot3</div>
+        <div class="arch-step">ROSMASTER M3</div>
       </div>
 
       <div class="content-card narrow">
@@ -179,12 +179,12 @@
       </div>
 
       <div class="grid three">
-        <article class="scenario-card"><span>01</span><h3>Static Obstacle Navigation</h3><p>The robot navigates around fixed obstacles in the environment.</p></article>
-        <article class="scenario-card"><span>02</span><h3>Dynamic Obstacle Crossing</h3><p>A moving obstacle crosses the robot's planned path.</p></article>
-        <article class="scenario-card"><span>03</span><h3>Temporary Path Blockage</h3><p>An obstacle temporarily blocks the path, forcing the robot to wait, slow down, or choose another local motion.</p></article>
-        <article class="scenario-card"><span>04</span><h3>Narrow Passage Navigation</h3><p>The robot navigates through a narrow passage where local control decisions are important.</p></article>
-        <article class="scenario-card"><span>05</span><h3>Cluttered Indoor Navigation</h3><p>The robot navigates in an indoor environment with multiple obstacles and changing local conditions.</p></article>
-        <article class="scenario-card"><span>06</span><h3>Repeated Trials</h3><p>Each controller is tested multiple times under the same scenario setup for fair comparison.</p></article>
+        <article class="scenario-card"><span>01</span><h3>Fast Dynamic Obstacle Crossing</h3><p>A moving obstacle crosses the robot's path at higher speed while the robot attempts to reach the goal.</p></article>
+        <article class="scenario-card"><span>02</span><h3>Temporary Path Blockage</h3><p>A moving obstacle briefly blocks the route, forcing the robot to slow down, wait, or locally avoid.</p></article>
+        <article class="scenario-card"><span>03</span><h3>Goal Reaching with Moving Obstacles</h3><p>The robot must reach the assigned goal while reacting to moving obstacles along the route.</p></article>
+        <article class="scenario-card"><span>04</span><h3>Static Obstacle Navigation</h3><p>A baseline scenario to verify normal local navigation behavior around fixed obstacles.</p></article>
+        <article class="scenario-card"><span>05</span><h3>Narrow Passage Navigation</h3><p>The robot navigates through a narrow passage where local control decisions are important.</p></article>
+        <article class="scenario-card"><span>06</span><h3>Repeated Controlled Trials</h3><p>Each controller is tested multiple times under the same scenario setup for fair comparison.</p></article>
       </div>
     </section>
 
@@ -196,7 +196,7 @@
 
       <div class="metrics-grid">
         <div>Success Rate</div><div>Time to Goal</div><div>Path Length</div><div>Number of Stops</div>
-        <div>Collision Count</div><div>Minimum Obstacle Distance</div><div>Velocity Smoothness</div><div>Recovery Behavior</div>
+        <div>Collision Count</div><div>Minimum Obstacle Distance</div><div>Velocity Smoothness</div><div>Dynamic Obstacle Clearance</div>
       </div>
     </section>
 
@@ -204,7 +204,7 @@
       <div><p class="section-tag">Benchmark Principle</p><h2>No unfair comparison</h2></div>
       <div class="content-card">
         <p>Classical controllers are used as available Nav2 baselines. RL policies are trained from scratch by this project and then evaluated under the same test setup.</p>
-        <p>The project does not assume that RL will always perform better. The goal is to measure where classical control performs well, where it struggles, and whether trained RL policies provide better adaptability in dynamic obstacle scenarios.</p>
+        <p>The project does not assume that RL will always perform better. The goal is to measure where classical control performs well, where it struggles, and whether the trained RL policy provides better adaptability in fast-moving dynamic-obstacle scenarios.</p>
       </div>
     </section>
 
@@ -232,7 +232,7 @@
     <section class="section">
       <div class="section-header"><p class="section-tag">Tech Stack</p><h2>Tools and Platform</h2></div>
       <div class="tech-list">
-        <span>TurtleBot3</span><span>ROS 2</span><span>Nav2</span><span>DWB</span><span>MPPI</span><span>Regulated Pure Pursuit</span><span>IsaacLab</span><span>Isaac Sim</span><span>PPO</span><span>Reinforcement Learning</span><span>Gazebo</span><span>RViz</span><span>Python</span>
+        <span>ROSMASTER M3</span><span>ROS 2</span><span>Nav2</span><span>DWB</span><span>MPPI</span><span>Regulated Pure Pursuit</span><span>IsaacLab</span><span>Isaac Sim</span><span>PPO</span><span>Reinforcement Learning</span><span>Gazebo</span><span>RViz</span><span>Python</span>
       </div>
     </section>
   </main>
@@ -241,7 +241,7 @@
     <div class="footer-inner">
       <div class="footer-brand">
         <h3>NavRL Bench</h3>
-        <p>RL training and Nav2 controller benchmarking for TurtleBot3 dynamic navigation.</p>
+        <p>RL-based dynamic obstacle avoidance and Nav2 controller benchmarking for ROSMASTER M3.</p>
       </div>
 
       <div class="footer-contributors">
@@ -260,7 +260,7 @@
     </div>
 
     <div class="footer-bottom">
-      <p>© 2026 NavRL Bench. Built for robotics navigation research and benchmarking.</p>
+      <p>© 2026 NavRL Bench. Built for ROSMASTER M3 dynamic-obstacle navigation research and benchmarking.</p>
     </div>
   </footer>
 

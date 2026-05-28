@@ -593,3 +593,75 @@ td {
     flex-direction: column;
   }
 }
+
+/* Hero background robot image */
+.hero {
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 2;
+  max-width: 760px;
+}
+
+.hero-subtitle {
+  max-width: 720px;
+  margin: -12px 0 22px;
+  color: var(--primary);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.hero-robot-bg {
+  position: absolute;
+  right: 2%;
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(42vw, 520px);
+  height: auto;
+  opacity: 0.18;
+  z-index: 1;
+  pointer-events: none;
+  user-select: none;
+
+  /* IMPORTANT: no blend mode */
+  mix-blend-mode: normal;
+  filter: none;
+
+  border-radius: 28px;
+
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    black 18%,
+    black 72%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    black 18%,
+    black 72%,
+    transparent 100%
+  );
+}
+
+/* remove any overlay that creates white/black box */
+.hero::after {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .hero-robot-bg {
+    right: -38%;
+    width: 100vw;
+    opacity: 0.10;
+  }
+
+  .hero-subtitle {
+    font-size: 18px;
+  }
+}

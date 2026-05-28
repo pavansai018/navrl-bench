@@ -284,17 +284,17 @@ The structure may evolve as the project implementation progresses.
 
 ## Project Website
 
-```text
-https://pavansai018.github.io/navrl-bench
-```
+
+[https://pavansai018.github.io/navrl-bench](https://pavansai018.github.io/navrl-bench)
+
 
 ---
 
 ## Source Repository
 
-```text
-https://github.com/pavansai018/navrl-bench
-```
+
+[https://github.com/pavansai018/navrl-bench](https://github.com/pavansai018/navrl-bench)
+
 
 ---
 

@@ -330,7 +330,7 @@ Current focus:
 
 ## References
 
-```
+```bibtex
 @InProceedings{macenski2020marathon2,
 author = {Macenski, Steven and Martin, Francisco and White, Ruffin and Ginés Clavero, Jonatan},
 title = {The Marathon 2: A Navigation System},
@@ -338,7 +338,7 @@ booktitle = {2020 IEEE/RSJ International Conference on Intelligent Robots and Sy
 year = {2020}
 }
 ```
-```
+```bibtex
 @article{macenski2023survey,
       title={From the desks of ROS maintainers: A survey of modern & capable mobile robotics algorithms in the robot operating system 2},
       author={S. Macenski, T. Moore, DV Lu, A. Merzlyakov, M. Ferguson},
@@ -346,7 +346,7 @@ year = {2020}
       journal = {Robotics and Autonomous Systems}
 }
 ```
-```
+```bibtex
 @article{macenski2023regulated,
       title={Regulated Pure Pursuit for Robot Path Tracking},
       author={Steve Macenski and Shrijit Singh and Francisco Martin and Jonatan Gines},
@@ -355,7 +355,7 @@ year = {2020}
 }
 ```
 
-```
+```bibtex
 @article{schulman2017proximal,
   title={Proximal policy optimization algorithms},
   author={Schulman, John and Wolski, Filip and Dhariwal, Prafulla and Radford, Alec and Klimov, Oleg},
@@ -363,7 +363,7 @@ year = {2020}
   year={2017}
 }
 ```
-```
+```bibtex
 @article{mittal2025isaaclab,
   title={Isaac Lab: A GPU-Accelerated Simulation Framework for Multi-Modal Robot Learning},
   author={Mayank Mittal and Pascal Roth and James Tigue and Antoine Richard and Octi Zhang and Peter Du and Antonio Serrano-Muñoz and Xinjie Yao and René Zurbrügg and Nikita Rudin and Lukasz Wawrzyniak and Milad Rakhsha and Alain Denzler and Eric Heiden and Ales Borovicka and Ossama Ahmed and Iretiayo Akinola and Abrar Anwar and Mark T. Carlson and Ji Yuan Feng and Animesh Garg and Renato Gasoto and Lionel Gulich and Yijie Guo and M. Gussert and Alex Hansen and Mihir Kulkarni and Chenran Li and Wei Liu and Viktor Makoviychuk and Grzegorz Malczyk and Hammad Mazhar and Masoud Moghani and Adithyavairavan Murali and Michael Noseworthy and Alexander Poddubny and Nathan Ratliff and Welf Rehberg and Clemens Schwarke and Ritvik Singh and James Latham Smith and Bingjie Tang and Ruchik Thaker and Matthew Trepte and Karl Van Wyk and Fangzhou Yu and Alex Millane and Vikram Ramasamy and Remo Steiner and Sangeeta Subramanian and Clemens Volk and CY Chen and Neel Jawale and Ashwin Varghese Kuruttukulam and Michael A. Lin and Ajay Mandlekar and Karsten Patzwaldt and John Welsh and Huihua Zhao and Fatima Anes and Jean-Francois Lafleche and Nicolas Moënne-Loccoz and Soowan Park and Rob Stepinski and Dirk Van Gelder and Chris Amevor and Jan Carius and Jumyung Chang and Anka He Chen and Pablo de Heras Ciechomski and Gilles Daviet and Mohammad Mohajerani and Julia von Muralt and Viktor Reutskyy and Michael Sauter and Simon Schirm and Eric L. Shi and Pierre Terdiman and Kenny Vilella and Tobias Widmer and Gordon Yeoman and Tiffany Chen and Sergey Grizan and Cathy Li and Lotus Li and Connor Smith and Rafael Wiltz and Kostas Alexis and Yan Chang and David Chu and Linxi "Jim" Fan and Farbod Farshidian and Ankur Handa and Spencer Huang and Marco Hutter and Yashraj Narang and Soha Pouya and Shiwei Sheng and Yuke Zhu and Miles Macklin and Adam Moravanszky and Philipp Reist and Yunrong Guo and David Hoeller and Gavriel State},

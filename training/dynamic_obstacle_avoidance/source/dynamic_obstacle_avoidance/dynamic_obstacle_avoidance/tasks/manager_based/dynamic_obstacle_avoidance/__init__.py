@@ -13,11 +13,11 @@ from . import agents
 
 
 gym.register(
-    id="Template-Dynamic-Obstacle-Avoidance-v0",
+    id="Dynamic-Obstacle-Avoidance-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.dynamic_obstacle_avoidance_env_cfg:DynamicObstacleAvoidanceEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.dynamic_obstacle_avoidance_env_cfg:DynamicObstacleAvoidanceM3EnvCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
         "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_amp_cfg.yaml",

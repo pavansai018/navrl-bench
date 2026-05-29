@@ -74,6 +74,7 @@ class M3FlatSceneCfg(InteractiveSceneCfg):
 #         ],
 #         max_wheel_speed=5.0,
 #     )
+
 @configclass
 class ActionsCfg:
     base_velocity = mdp.KinematicMecanumActionCfg(

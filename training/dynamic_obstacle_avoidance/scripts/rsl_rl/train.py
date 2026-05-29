@@ -51,6 +51,12 @@ sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
+# suppress noisy omni.usd warnings (e.g. unresolved visual prim references)
+import carb # type: ignore
+carb.logging.acquire_logging().set_level_threshold_for_source(
+    'omni.usd', carb.logging.LogSettingBehavior.OVERRIDE, carb.logging.LEVEL_ERROR
+)
+
 """Check for minimum supported RSL-RL version."""
 
 import importlib.metadata as metadata
@@ -199,7 +205,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # create runner from rsl-rl
     if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        agent_cfg_dict = agent_cfg.to_dict()
+
+        # IsaacLab/RSL-RL version compatibility fix:
+        # Some IsaacLab versions add this key, but my installed rsl_rl PPO does not accept it.
+        agent_cfg_dict["algorithm"].pop("share_cnn_encoders", None)
+        # runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=log_dir, device=agent_cfg.device)
+
     elif agent_cfg.class_name == "DistillationRunner":
         runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     else:

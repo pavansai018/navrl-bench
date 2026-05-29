@@ -109,7 +109,7 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 # import logger
 logger = logging.getLogger(__name__)
 
-import dynamic_obstacle_avoidance.tasks  # noqa: F401
+import dynamic_obstacle_avoidance.tasks  # type: ignore # noqa: F401
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True

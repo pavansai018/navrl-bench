@@ -12,8 +12,8 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 16
     max_iterations = 150
-    save_interval = 50
-    experiment_name = "cartpole_direct"
+    save_interval = 100
+    experiment_name = "m3_obstacle_avoidance"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,

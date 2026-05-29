@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<robot name="ROSMASTER-M3" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <xacro:arg name="prefix" default="" />                                      <!-- namespace -->
+  <xacro:arg name="laser_type" default="dual" />                              <!-- laser sensor type: single/dual -->    
+  <xacro:arg name="camera_type" default="as_hp60c" />                         <!-- depth camera type -->
+
+  <xacro:include filename="$(find m3_ros2)/urdf/materials.xacro"/>     <!-- model color attributes -->
+  <xacro:include filename="$(find m3_ros2)/urdf/common_base.xacro" />  <!-- robot chassis template -->
+  <xacro:include filename="$(find m3_ros2)/urdf/laser.xacro" />        <!-- lidar template -->
+
+  <xacro:common_base prefix="$(arg prefix)"  camera_type="$(arg camera_type)" /><!-- instantiated robot chassis -->
+  <xacro:laser laser_type="$(arg laser_type)" prefix="$(arg prefix)" />         <!-- instantiate lidar -->
+
+</robot>
+
+

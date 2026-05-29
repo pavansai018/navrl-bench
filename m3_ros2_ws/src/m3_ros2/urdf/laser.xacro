@@ -1,0 +1,197 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="laser" params="laser_type prefix">
+
+  <xacro:if value="${laser_type == 'dual'}">
+  <!-- Dual lidar -->
+
+    <!-- Right front lidar -->
+    <link
+      name="${prefix}laser0_frame">
+      <inertial>
+        <origin
+          xyz="-0.0269843281171733 0.00816587315971244 -0.0236277413611298"
+          rpy="0 0 0" />
+        <mass
+          value="0.0308225741620077" />
+        <inertia
+          ixx="3.82222338459333E-06"
+          ixy="1.9498522956423E-06"
+          ixz="-3.94061068649985E-08"
+          iyy="1.37519890249445E-05"
+          iyz="1.02396804900856E-07"
+          izz="1.67927144171134E-05" />
+      </inertial>
+      <visual>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://m3_ros2/meshes/Tmini-Plus2_1_Link.STL" />
+        </geometry>
+        <material
+          name="">
+          <color
+            rgba="0.113725490196078 0.113725490196078 0.113725490196078 1" />
+        </material>
+      </visual>
+      <collision>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://m3_ros2/meshes/Tmini-Plus2_1_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint
+      name="${prefix}laser_link_front_Joint"
+      type="fixed">
+      <origin
+        xyz="0.10503 -0.08602 0.099466"
+        rpy="0 0 0" />
+      <parent
+        link="${prefix}base_link" />
+      <child
+        link="${prefix}laser0_frame" />
+      <axis
+        xyz="0 0 0" />
+    </joint>
+
+    <!--left rear lidar-->
+    <link
+      name="${prefix}laser1_frame">
+      <inertial>
+        <origin
+          xyz="0.0269847162349362 -0.00816244761834535 -0.023628830709695"
+          rpy="0 0 0" />
+        <mass
+          value="0.0308225741575237" />
+        <inertia
+          ixx="3.82201771047017E-06"
+          ixy="1.94932291718845E-06"
+          ixz="3.9683496469893E-08"
+          iyy="1.37522209920578E-05"
+          iyz="-1.02785775330184E-07"
+          izz="1.67926881225509E-05" />
+      </inertial>
+      <visual>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://m3_ros2/meshes/Tmini-Plus2_2_Link.STL" />
+        </geometry>
+        <material
+          name="">
+          <color
+            rgba="0.113725490196078 0.113725490196078 0.113725490196078 1" />
+        </material>
+      </visual>
+      <collision>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://m3_ros2/meshes/Tmini-Plus2_2_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint
+      name="${prefix}laser_link_rear_Joint"
+      type="fixed">
+      <origin
+        xyz="-0.13 0.086 0.099477"
+        rpy="0 0 0" />
+      <parent
+        link="${prefix}base_link" />
+      <child
+        link="${prefix}laser1_frame" />
+      <axis
+        xyz="0 0 0" />
+    </joint>
+
+    <!--virtual lidar  -->
+    <link
+      name="${prefix}lasersim_frame">
+    </link>
+    <joint
+      name="${prefix}lasersim_link_Joint"
+      type="fixed">
+      <origin
+        xyz="0 0 0.099466"
+        rpy="0 0 0" />
+      <parent
+        link="${prefix}base_link" />
+      <child
+        link="${prefix}lasersim_frame" />
+    </joint>
+  </xacro:if>
+
+  <xacro:if value="${laser_type == 'single'}">
+  <!-- single lidar model -->
+    <link
+      name="${prefix}laser23_frame">
+      <inertial>
+        <origin
+          xyz="8.12566203823861E-05 -0.000145242332635839 -0.0116354876783445"
+          rpy="0 0 0" />
+        <mass
+          value="0.0105171183657596" />
+        <inertia
+          ixx="1.91940966682891E-06"
+          ixy="-2.34521780742758E-08"
+          ixz="3.84384237917522E-09"
+          iyy="1.90378238899883E-06"
+          iyz="-1.91984444009412E-09"
+          izz="3.33378190581108E-06" />
+      </inertial>
+      <visual>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://m3_ros2/meshes/Tmini-Plus1_Link.STL" />
+        </geometry>
+        <material
+          name="">
+          <color
+            rgba="0.113725490196078 0.113725490196078 0.113725490196078 1" />
+        </material>
+      </visual>
+      <collision>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://m3_ros2/meshes/Tmini-Plus1_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint
+      name="${prefix}laser_frame_Joint"
+      type="fixed">
+      <origin
+        xyz="0.035132 0 0.13998"
+        rpy="0 0 0" />
+      <parent
+        link="${prefix}base_link" />
+      <child
+        link="${prefix}laser23_frame" />
+      <axis
+        xyz="0 0 0" />
+    </joint>
+  </xacro:if>
+
+  </xacro:macro>
+
+</robot>
+
+

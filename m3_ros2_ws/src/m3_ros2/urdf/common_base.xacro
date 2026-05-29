@@ -1,0 +1,440 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="common_base" params="prefix camera_type">
+
+  <!--base_footprint投影点-->
+  <link
+    name="${prefix}base_footprint">
+  </link>
+  <joint
+    name="${prefix}base-Joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.03"
+      rpy="0 0 0" />
+    <parent
+      link="${prefix}base_footprint" />
+    <child
+      link="${prefix}base_link" />
+  </joint>
+
+
+  <!--base_link底盘-->
+  <link
+    name="${prefix}base_link">
+    <inertial>
+      <origin
+        xyz="-0.02984496350171 -0.000481153572635691 0.0765287728161752"
+        rpy="0 0 0" />
+      <mass
+        value="0.99934444005899" />
+      <inertia
+        ixx="0.00160080186836152"
+        ixy="3.98571758764143E-06"
+        ixz="-0.000131328647411587"
+        iyy="0.00221164246632588"
+        iyz="5.5986256573897E-07"
+        izz="0.00344837201415694" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.776470588235294 0.756862745098039 0.737254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!--depth camera -->
+  <link
+    name="${prefix}camera_link">
+    <inertial>
+      <origin
+        xyz="-0.000338233024565315 0.000873950945523536 0.000135673799547986"
+        rpy="0 0 0" />
+      <mass
+        value="0.0238818467584584" />
+      <inertia
+        ixx="1.37649367410834E-05"
+        ixy="1.24830471237178E-07"
+        ixz="1.37445274067818E-08"
+        iyy="1.59984966748044E-06"
+        iyz="2.27879404919167E-08"
+        izz="1.39784153878035E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/camera_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 1.57 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/camera_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="${prefix}camera-Joint"
+    type="fixed">
+    <origin
+      xyz="0.089279 0 0.087335"
+      rpy="0 0 0" />
+    <parent
+      link="${prefix}base_link" />
+    <child
+      link="${prefix}camera_link" />
+  </joint>
+
+
+  <!-- Camera virtual coordinate system, used to flip point clouds-->
+  <xacro:if value="${camera_type == 'as_hp60c'}">
+  <!-- ansijan camera -->
+    <link
+      name="${prefix}ascamera_hp60c_camera_link_0">
+    </link>
+    <joint
+      name="${prefix}simcamera-Joint"
+      type="continuous">
+      <origin
+        xyz="0 0 0"
+        rpy="-1.57 0 -1.57" />
+      <parent
+        link="${prefix}camera_link" />
+      <child
+        link="${prefix}ascamera_hp60c_camera_link_0" />
+      <axis
+        xyz="0 0 1" />
+    </joint>
+  </xacro:if>
+
+
+  <!-- <xacro:if value="${camera_type == 'dabai_dcw2'}">
+
+    <link
+      name="${prefix}${ascamera_hp60c_camera_link_0}">
+    </link>
+    <joint
+      name="${prefix}simcamera-Joint"
+      type="fixed">
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <parent
+        link="${prefix}camera_link" />
+      <child
+        link="${prefix}${ascamera_hp60c_camera_link_0}" />
+    </joint>
+
+  </xacro:if> -->
+
+
+
+  <!--IMU传感器  -->
+  <link
+    name="${prefix}imu_frame">
+    <inertial>
+      <origin
+        xyz="-0.00179025847750633 0.00264720509651104 9.90269646727743E-05"
+        
+        rpy="0 0 0" />
+      <mass
+        value="0.0189075829050396" />
+      <inertia
+        ixx="4.73477803493336E-06"
+        ixy="1.6745074479594E-09"
+        ixz="8.93836267742825E-10"
+        iyy="2.12052097184731E-06"
+        iyz="-3.87767258085538E-10"
+        izz="6.74576051815791E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/IMU_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/IMU_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint
+    name="${prefix}IMU_Joint"
+    type="fixed">
+    <origin
+      xyz="0.067303 0.0071499 0.053691"
+      rpy="0 0  -1.5708" />
+    <parent
+      link="${prefix}base_link" />
+    <child
+      link="${prefix}imu_frame" />
+  </joint>
+
+  <!--left front wheel  -->
+  <link
+    name="${prefix}lwheel1_Link">
+    <inertial>
+      <origin
+        xyz="1.53560272599211E-05 1.98250838429059E-06 -0.0108846203867566"
+        rpy="0 0 0" />
+      <mass
+        value="0.0989881984813495" />
+      <inertia
+        ixx="4.45414870929911E-05"
+        ixy="1.57090619994683E-10"
+        ixz="2.38113616704235E-09"
+        iyy="4.45412348155267E-05"
+        iyz="8.43582144052669E-10"
+        izz="7.4602274246963E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/lwheel1_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/lwheel1_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="${prefix}lwheel1_Joint"
+    type="continuous">
+    <origin
+      xyz="0.0795 0.09775 0.0145"
+      rpy="-1.5708 -1.5708 0" />
+    <parent
+      link="${prefix}base_link" />
+    <child
+      link="${prefix}lwheel1_Link" />
+    <axis
+      xyz="0 0 1" />
+
+  </joint>
+
+  <!-- left rear wheel -->
+  <link
+    name="${prefix}lwheel2_Link">
+    <inertial>
+      <origin
+        xyz="1.28765327241931E-05 -2.45112629573135E-06 -0.0108847338593798"
+        rpy="0 0 0" />
+      <mass
+        value="0.0989867715411591" />
+      <inertia
+        ixx="4.45411429026561E-05"
+        ixy="3.49581085220021E-10"
+        ixz="4.25224100985959E-10"
+        iyy="4.45402969289142E-05"
+        iyz="-2.52453535532053E-09"
+        izz="7.46016514000059E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/lwheel2_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/lwheel2_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="${prefix}lwheel2_Joint"
+    type="continuous">
+    <origin
+      xyz="-0.0795 0.09775 0.014498"
+      rpy="-1.5708 -1.5708 0" />
+    <parent
+      link="${prefix}base_link" />
+    <child
+      link="${prefix}lwheel2_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+
+  <!--right front wheel -->
+  <link
+    name="${prefix}rwheel1_Link">
+    <inertial>
+      <origin
+        xyz="-1.44743128333881E-05 -2.39019759440406E-06 -0.0108847338867027"
+        rpy="0 0 0" />
+      <mass
+        value="0.0989867702680243" />
+      <inertia
+        ixx="4.45411446128523E-05"
+        ixy="3.47174208470481E-10"
+        ixz="4.17555484487362E-10"
+        iyy="4.45402942652055E-05"
+        iyz="-2.52548693570598E-09"
+        izz="7.46016508017433E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/rwheel1_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/rwheel1_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="${prefix}rwheel1_Joint"
+    type="continuous">
+    <origin
+      xyz="0.0795 -0.09775 0.0145"
+      rpy="1.5708 1.5708 0" />
+    <parent
+      link="${prefix}base_link" />
+    <child
+      link="${prefix}rwheel1_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+
+  <!-- right rear wheel -->
+  <link
+    name="${prefix}rwheel2_Link">
+    <inertial>
+      <origin
+        xyz="-1.53534838632473E-05 -2.00205735528119E-06 -0.0108846205927622"
+        rpy="0 0 0" />
+      <mass
+        value="0.098988198599032" />
+      <inertia
+        ixx="4.45414873742238E-05"
+        ixy="1.57073466808373E-10"
+        ixz="-2.37970709300959E-09"
+        iyy="4.45412346444611E-05"
+        iyz="-8.4683900934824E-10"
+        izz="7.46022743347392E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/rwheel2_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://m3_ros2/meshes/rwheel2_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="${prefix}rwheel2_Joint"
+    type="continuous">
+    <origin
+      xyz="-0.0795 -0.09775 0.014498"
+      rpy="1.5708 1.5708 0" />
+    <parent
+      link="${prefix}base_link" />
+    <child
+      link="${prefix}rwheel2_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+
+  </xacro:macro>
+
+</robot>

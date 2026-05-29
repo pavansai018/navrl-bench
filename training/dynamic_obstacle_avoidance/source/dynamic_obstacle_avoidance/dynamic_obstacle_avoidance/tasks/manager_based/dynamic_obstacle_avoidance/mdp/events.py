@@ -6,47 +6,17 @@ import torch
 
 from isaaclab.managers import SceneEntityCfg
 
-
-CELL_SIZE = 0.50
+CELL_SIZE = 0.6
 HIDDEN_Z = -10.0
 
+SCENARIOS = [
+    'narrow_corridor_crossing',
+    'doorway_human_crossing',
+    'blind_corner_intercept',
+    'static_dynamic',
+    'crossing_stream'
+]
 
-MAP_TEMPLATES = {
-    "corridor_crossing": [
-        "########################",
-        "#..........D...........#",
-        "#..........D...........#",
-        "#####.############.#####",
-        "#S....................G#",
-        "#####.############.#####",
-        "#..........D...........#",
-        "#..........D...........#",
-        "########################",
-    ],
-    "doorway_blockage": [
-        "########################",
-        "#S.........#...........#",
-        "#..........#...........#",
-        "#..........#...........#",
-        "#####.######.######.####",
-        "#..........D..........G#",
-        "#####.######.######.####",
-        "#..........#...........#",
-        "#..........#...........#",
-        "########################",
-    ],
-    "t_junction_crossing": [
-        "########################",
-        "#..........D...........#",
-        "#..........D...........#",
-        "###########.############",
-        "#S....................G#",
-        "###########.############",
-        "#..........D...........#",
-        "#..........D...........#",
-        "########################",
-    ],
-}
 
 
 def _ensure_navrl_buffers(env):
@@ -95,67 +65,12 @@ def _env_origins(env, env_ids: torch.Tensor) -> torch.Tensor:
     return torch.zeros(len(env_ids), 2, device=env.device)
 
 
-def _grid_to_xy(row: int, col: int, rows: int, cols: int):
-    x = (col - (cols - 1) / 2.0) * CELL_SIZE
-    y = ((rows - 1) / 2.0 - row) * CELL_SIZE
-    return x, y
-
-
-def _parse_template(template_name: str):
-    grid = MAP_TEMPLATES[template_name]
-    rows = len(grid)
-    cols = len(grid[0])
-
-    wall_xy = []
-    free_xy = []
-    dynamic_lane_xy = []
-    start_xy = None
-    goal_xy = None
-
-    for r, line in enumerate(grid):
-        for c, char in enumerate(line):
-            x, y = _grid_to_xy(r, c, rows, cols)
-
-            if char == "#":
-                wall_xy.append((x, y))
-            elif char == "D":
-                dynamic_lane_xy.append((x, y))
-                free_xy.append((x, y))
-            elif char == "S":
-                start_xy = (x, y)
-                free_xy.append((x, y))
-            elif char == "G":
-                goal_xy = (x, y)
-                free_xy.append((x, y))
-            else:
-                free_xy.append((x, y))
-
-    return wall_xy, free_xy, dynamic_lane_xy, start_xy, goal_xy
-
-
 def _quat_from_yaw(yaw: torch.Tensor) -> torch.Tensor:
     quat = torch.zeros(len(yaw), 4, device=yaw.device)
     quat[:, 0] = torch.cos(0.5 * yaw)
     quat[:, 3] = torch.sin(0.5 * yaw)
     return quat
 
-
-def _collection_pose(env, env_ids: torch.Tensor, xy: torch.Tensor, z: float, max_count: int):
-    pose = torch.zeros(len(env_ids), max_count, 7, device=env.device)
-    pose[..., 2] = HIDDEN_Z
-    pose[..., 3] = 1.0
-
-    if xy.numel() == 0:
-        return pose
-
-    origins = _env_origins(env, env_ids)
-    count = xy.shape[1]
-
-    pose[:, :count, 0:2] = xy + origins[:, None, :]
-    pose[:, :count, 2] = z
-    pose[:, :count, 3] = 1.0
-
-    return pose
 
 
 def _write_collection_pose(collection, pose: torch.Tensor, env_ids: torch.Tensor):
@@ -190,61 +105,134 @@ def reset_runtime_map(
     static_asset_cfg: SceneEntityCfg,
     dynamic_asset_cfg: SceneEntityCfg,
     template_name: str = "random",
-    num_static_obstacles: int = 6,
-    num_dynamic_obstacles: int = 4,
+    num_static_obstacles: int = 5,
+    num_dynamic_obstacles: int = 3,
 ):
     _ensure_navrl_buffers(env)
 
     if template_name == "random":
-        names = list(MAP_TEMPLATES.keys())
-        template_name = names[torch.randint(0, len(names), (1,), device=env.device).item()]
+        scenario_id = torch.randint(0, len(SCENARIOS), (1,), device=env.device).item()
+        template_name = SCENARIOS[scenario_id]
 
-    wall_xy, free_xy, dynamic_lane_xy, _, _ = _parse_template(template_name)
+    wall_segments, static_obstacles, dynamic_lanes, start, goal = _get_scenario_layout(template_name)
 
     walls = env.scene[wall_asset_cfg.name]
-    static_obstacles = env.scene[static_asset_cfg.name]
-    dynamic_obstacles = env.scene[dynamic_asset_cfg.name]
+    static_obs = env.scene[static_asset_cfg.name]
+    dynamic_obs = env.scene[dynamic_asset_cfg.name]
 
     max_walls = walls.num_objects
-    max_static = static_obstacles.num_objects
-    max_dynamic = dynamic_obstacles.num_objects
+    max_static = static_obs.num_objects
+    max_dynamic = dynamic_obs.num_objects
 
-    wall_xy = torch.tensor(wall_xy[:max_walls], device=env.device, dtype=torch.float32)
-    wall_xy = wall_xy.unsqueeze(0).repeat(len(env_ids), 1, 1)
+    # ----------------------------
+    # Walls
+    # ----------------------------
+    wall_pose = torch.zeros(len(env_ids), max_walls, 7, device=env.device)
+    wall_pose[..., 2] = HIDDEN_Z
+    wall_pose[..., 3] = 1.0
 
-    wall_pose = _collection_pose(env, env_ids, wall_xy, z=0.25, max_count=max_walls)
+    env.navrl_wall_xy[env_ids] = 999.0
+
+    active_wall_count = min(len(wall_segments), max_walls)
+
+    origins = _env_origins(env, env_ids)
+
+    for j in range(active_wall_count):
+        x, y, sx, sy = wall_segments[j]
+
+        wall_pose[:, j, 0] = x + origins[:, 0]
+        wall_pose[:, j, 1] = y + origins[:, 1]
+        wall_pose[:, j, 2] = 0.25
+        wall_pose[:, j, 3] = 1.0
+
+        env.navrl_wall_xy[env_ids, j, 0] = x
+        env.navrl_wall_xy[env_ids, j, 1] = y
+
     _write_collection_pose(walls, wall_pose, env_ids)
 
-    env.navrl_wall_xy[env_ids, : wall_xy.shape[1]] = wall_xy
-    env.navrl_active_wall_count = wall_xy.shape[1]
+    env.navrl_active_wall_count = active_wall_count
 
-    free_xy = torch.tensor(free_xy, device=env.device, dtype=torch.float32)
-    dynamic_lane_xy = torch.tensor(dynamic_lane_xy, device=env.device, dtype=torch.float32)
+    # ----------------------------
+    # Static obstacles
+    # ----------------------------
+    static_pose = torch.zeros(len(env_ids), max_static, 7, device=env.device)
+    static_pose[..., 2] = HIDDEN_Z
+    static_pose[..., 3] = 1.0
 
-    static_pose_xy = torch.zeros(len(env_ids), num_static_obstacles, 2, device=env.device)
-    for i in range(len(env_ids)):
-        ids = torch.randint(0, free_xy.shape[0], (num_static_obstacles,), device=env.device)
-        static_pose_xy[i] = free_xy[ids]
+    env.navrl_static_xy[env_ids] = 999.0
 
-    static_pose = _collection_pose(env, env_ids, static_pose_xy, z=0.225, max_count=max_static)
-    _write_collection_pose(static_obstacles, static_pose, env_ids)
+    active_static_count = min(num_static_obstacles, len(static_obstacles), max_static)
 
-    env.navrl_static_xy[env_ids, :num_static_obstacles] = static_pose_xy
-    env.navrl_active_static_count = num_static_obstacles
+    for j in range(active_static_count):
+        x, y, sx, sy = static_obstacles[j]
 
-    if dynamic_lane_xy.shape[0] == 0:
-        dynamic_lane_xy = free_xy
+        static_pose[:, j, 0] = x + origins[:, 0]
+        static_pose[:, j, 1] = y + origins[:, 1]
+        static_pose[:, j, 2] = 0.225
+        static_pose[:, j, 3] = 1.0
 
-    dynamic_pose_xy = torch.zeros(len(env_ids), num_dynamic_obstacles, 2, device=env.device)
-    for i in range(len(env_ids)):
-        ids = torch.randint(0, dynamic_lane_xy.shape[0], (num_dynamic_obstacles,), device=env.device)
-        dynamic_pose_xy[i] = dynamic_lane_xy[ids]
+        env.navrl_static_xy[env_ids, j, 0] = x
+        env.navrl_static_xy[env_ids, j, 1] = y
 
-    dynamic_pose = _collection_pose(env, env_ids, dynamic_pose_xy, z=0.325, max_count=max_dynamic)
-    _write_collection_pose(dynamic_obstacles, dynamic_pose, env_ids)
+    _write_collection_pose(static_obs, static_pose, env_ids)
 
-    env.navrl_dynamic_xy[env_ids, :num_dynamic_obstacles] = dynamic_pose_xy
-    env.navrl_active_dynamic_count = num_dynamic_obstacles
+    env.navrl_active_static_count = active_static_count
+
+    # ----------------------------
+    # Dynamic obstacles
+    # ----------------------------
+    dynamic_pose = torch.zeros(len(env_ids), max_dynamic, 7, device=env.device)
+    dynamic_pose[..., 2] = HIDDEN_Z
+    dynamic_pose[..., 3] = 1.0
+
+    env.navrl_dynamic_xy[env_ids] = 999.0
+
+    active_dynamic_count = min(num_dynamic_obstacles, len(dynamic_lanes), max_dynamic)
+
+    if not hasattr(env, "navrl_dynamic_lane_start_xy"):
+        env.navrl_dynamic_lane_start_xy = torch.zeros(env.num_envs, max_dynamic, 2, device=env.device)
+    if not hasattr(env, "navrl_dynamic_lane_end_xy"):
+        env.navrl_dynamic_lane_end_xy = torch.zeros(env.num_envs, max_dynamic, 2, device=env.device)
+    if not hasattr(env, "navrl_dynamic_lane_direction"):
+        env.navrl_dynamic_lane_direction = torch.ones(env.num_envs, max_dynamic, device=env.device)
+
+    for j in range(active_dynamic_count):
+        x1, y1, x2, y2 = dynamic_lanes[j]
+
+        phase = torch.rand(len(env_ids), device=env.device)
+        x = x1 + phase * (x2 - x1)
+        y = y1 + phase * (y2 - y1)
+
+        dynamic_pose[:, j, 0] = x + origins[:, 0]
+        dynamic_pose[:, j, 1] = y + origins[:, 1]
+        dynamic_pose[:, j, 2] = 0.325
+        dynamic_pose[:, j, 3] = 1.0
+
+        env.navrl_dynamic_xy[env_ids, j, 0] = x
+        env.navrl_dynamic_xy[env_ids, j, 1] = y
+
+        env.navrl_dynamic_lane_start_xy[env_ids, j, 0] = x1
+        env.navrl_dynamic_lane_start_xy[env_ids, j, 1] = y1
+        env.navrl_dynamic_lane_end_xy[env_ids, j, 0] = x2
+        env.navrl_dynamic_lane_end_xy[env_ids, j, 1] = y2
+
+        direction = torch.where(torch.rand(len(env_ids), device=env.device) > 0.5, 1.0, -1.0)
+        env.navrl_dynamic_lane_direction[env_ids, j] = direction
+
+    _write_collection_pose(dynamic_obs, dynamic_pose, env_ids)
+
+    env.navrl_active_dynamic_count = active_dynamic_count
+
+    # Store scenario start/goal for reset_path_command
+    if not hasattr(env, "navrl_scenario_start_xy"):
+        env.navrl_scenario_start_xy = torch.zeros(env.num_envs, 2, device=env.device)
+    if not hasattr(env, "navrl_scenario_goal_xy"):
+        env.navrl_scenario_goal_xy = torch.zeros(env.num_envs, 2, device=env.device)
+
+    env.navrl_scenario_start_xy[env_ids, 0] = start[0]
+    env.navrl_scenario_start_xy[env_ids, 1] = start[1]
+    env.navrl_scenario_goal_xy[env_ids, 0] = goal[0]
+    env.navrl_scenario_goal_xy[env_ids, 1] = goal[1]
 
 
 def reset_robot_pose(
@@ -272,7 +260,6 @@ def reset_robot_pose(
     robot.write_root_pose_to_sim(pose, env_ids=env_ids)
     robot.write_root_velocity_to_sim(velocity, env_ids=env_ids)
 
-
 def reset_path_command(
     env,
     env_ids: torch.Tensor,
@@ -287,18 +274,23 @@ def reset_path_command(
 ):
     _ensure_navrl_buffers(env)
 
-    start_x = torch.empty(len(env_ids), device=env.device).uniform_(*start_x_range)
-    start_y = torch.empty(len(env_ids), device=env.device).uniform_(*start_y_range)
-    goal_x = torch.empty(len(env_ids), device=env.device).uniform_(*goal_x_range)
-    goal_y = torch.empty(len(env_ids), device=env.device).uniform_(*goal_y_range)
+    if hasattr(env, "navrl_scenario_start_xy") and hasattr(env, "navrl_scenario_goal_xy"):
+        start = env.navrl_scenario_start_xy[env_ids]
+        goal = env.navrl_scenario_goal_xy[env_ids]
+    else:
+        start_x = torch.empty(len(env_ids), device=env.device).uniform_(*start_x_range)
+        start_y = torch.empty(len(env_ids), device=env.device).uniform_(*start_y_range)
+        goal_x = torch.empty(len(env_ids), device=env.device).uniform_(*goal_x_range)
+        goal_y = torch.empty(len(env_ids), device=env.device).uniform_(*goal_y_range)
 
-    start = torch.stack([start_x, start_y], dim=-1)
-    goal = torch.stack([goal_x, goal_y], dim=-1)
+        start = torch.stack([start_x, start_y], dim=-1)
+        goal = torch.stack([goal_x, goal_y], dim=-1)
 
     env.navrl_final_goal_xy[env_ids] = goal
 
     num_points = env.navrl_path_points.shape[1]
     t = torch.linspace(0.0, 1.0, num_points, device=env.device).view(1, num_points, 1)
+
     path = start[:, None, :] * (1.0 - t) + goal[:, None, :] * t
     env.navrl_path_points[env_ids] = path
 
@@ -318,7 +310,6 @@ def reset_path_command(
         lookahead_marker = env.scene[lookahead_marker_cfg.name]
         _write_marker_pose(lookahead_marker, env, env_ids, lookahead, z=0.10)
 
-
 def reset_dynamic_obstacles(
     env,
     env_ids: torch.Tensor,
@@ -336,7 +327,6 @@ def reset_dynamic_obstacles(
     env.navrl_dynamic_vel_xy[env_ids, :num_active, 1] = speeds * torch.sin(angles)
     env.navrl_active_dynamic_count = num_active
 
-
 def move_dynamic_obstacles(
     env,
     env_ids: torch.Tensor,
@@ -350,32 +340,52 @@ def move_dynamic_obstacles(
     if n <= 0:
         return
 
-    dynamic_obstacles = env.scene[asset_cfg.name]
-    max_dynamic = dynamic_obstacles.num_objects
+    dynamic_obs = env.scene[asset_cfg.name]
+    max_dynamic = dynamic_obs.num_objects
+    origins = _env_origins(env, env_ids)
 
     dt = env.step_dt
 
     xy = env.navrl_dynamic_xy[env_ids, :n]
-    vel = env.navrl_dynamic_vel_xy[env_ids, :n]
+    start = env.navrl_dynamic_lane_start_xy[env_ids, :n]
+    end = env.navrl_dynamic_lane_end_xy[env_ids, :n]
+    direction_sign = env.navrl_dynamic_lane_direction[env_ids, :n]
 
-    xy = xy + vel * dt
+    lane_vec = end - start
+    lane_len = torch.norm(lane_vec, dim=-1).clamp_min(1e-6)
+    lane_dir = lane_vec / lane_len.unsqueeze(-1)
 
-    hit_x = torch.abs(xy[..., 0]) > x_limit
-    hit_y = torch.abs(xy[..., 1]) > y_limit
+    speed = 0.65
 
-    vel[..., 0] = torch.where(hit_x, -vel[..., 0], vel[..., 0])
-    vel[..., 1] = torch.where(hit_y, -vel[..., 1], vel[..., 1])
+    xy = xy + lane_dir * direction_sign.unsqueeze(-1) * speed * dt
 
-    xy[..., 0] = torch.clamp(xy[..., 0], -x_limit, x_limit)
-    xy[..., 1] = torch.clamp(xy[..., 1], -y_limit, y_limit)
+    from_start = xy - start
+    progress = torch.sum(from_start * lane_dir, dim=-1)
+
+    hit_start = progress < 0.0
+    hit_end = progress > lane_len
+    hit = hit_start | hit_end
+
+    direction_sign = torch.where(hit, -direction_sign, direction_sign)
+
+    # Correct tensor-safe clamp:
+    progress = torch.maximum(progress, torch.zeros_like(progress))
+    progress = torch.minimum(progress, lane_len)
+
+    xy = start + lane_dir * progress.unsqueeze(-1)
 
     env.navrl_dynamic_xy[env_ids, :n] = xy
-    env.navrl_dynamic_vel_xy[env_ids, :n] = vel
+    env.navrl_dynamic_lane_direction[env_ids, :n] = direction_sign
 
-    pose = _collection_pose(env, env_ids, xy, z=0.325, max_count=max_dynamic)
-    _write_collection_pose(dynamic_obstacles, pose, env_ids)
+    pose = torch.zeros(len(env_ids), max_dynamic, 7, device=env.device)
+    pose[..., 2] = HIDDEN_Z
+    pose[..., 3] = 1.0
 
+    pose[:, :n, 0:2] = xy + origins[:, None, :]
+    pose[:, :n, 2] = 0.325
+    pose[:, :n, 3] = 1.0
 
+    _write_collection_pose(dynamic_obs, pose, env_ids)
 def update_lookahead_target(
     env,
     env_ids: torch.Tensor,
@@ -410,3 +420,159 @@ def update_lookahead_target(
     if lookahead_marker_cfg is not None:
         marker = env.scene[lookahead_marker_cfg.name]
         _write_marker_pose(marker, env, env_ids, lookahead, z=0.10)
+
+
+def _get_scenario_layout(name: str):
+    """Return wall segments, static obstacles, dynamic obstacle spawn lines, start, goal.
+
+    Coordinates are local to each environment.
+
+    wall_segments:
+        list of (x, y, sx, sy)
+
+    static_obstacles:
+        list of (x, y, sx, sy)
+
+    dynamic_lanes:
+        list of (x1, y1, x2, y2)
+        dynamic obstacles move along/cross these lanes.
+
+    start:
+        (x, y)
+
+    goal:
+        (x, y)
+    """
+
+    if name == "narrow_corridor_crossing":
+        # Long corridor where moving obstacles cross the robot path.
+        # Classical controllers often stop until the crossing object fully clears.
+        wall_segments = [
+            (0.0,  1.25, 10.0, 0.25),   # upper corridor wall
+            (0.0, -1.25, 10.0, 0.25),   # lower corridor wall
+            (-5.0, 0.0, 0.25, 2.75),    # left boundary
+            (5.0,  0.0, 0.25, 2.75),    # right boundary
+        ]
+
+        static_obstacles = [
+            (-1.4, 0.65, 0.45, 0.45),
+            (1.6, -0.65, 0.45, 0.45),
+        ]
+
+        dynamic_lanes = [
+            (-2.0, -1.0, -2.0, 1.0),
+            (0.0, 1.0, 0.0, -1.0),
+            (2.0, -1.0, 2.0, 1.0),
+        ]
+
+        start = (-4.3, 0.0)
+        goal = (4.3, 0.0)
+
+    elif name == "doorway_human_crossing":
+        # Doorway bottleneck. Robot must time the doorway crossing.
+        # Classical controllers usually freeze at the doorway.
+        wall_segments = [
+            (-2.5, 1.5, 5.0, 0.25),
+            (-2.5, -1.5, 5.0, 0.25),
+            (2.5, 1.5, 5.0, 0.25),
+            (2.5, -1.5, 5.0, 0.25),
+
+            (0.0, 1.05, 0.25, 0.90),    # top doorway wall piece
+            (0.0, -1.05, 0.25, 0.90),   # bottom doorway wall piece
+        ]
+
+        static_obstacles = [
+            (-3.2, 0.7, 0.55, 0.55),
+            (3.2, -0.7, 0.55, 0.55),
+        ]
+
+        dynamic_lanes = [
+            (0.0, -1.3, 0.0, 1.3),      # human crosses doorway
+            (-0.5, 1.2, 0.5, -1.2),
+        ]
+
+        start = (-4.2, 0.0)
+        goal = (4.2, 0.0)
+
+    elif name == "blind_corner_intercept":
+        # L-shaped turn. Dynamic obstacle appears from blind side.
+        # Tests anticipation, not just reactive stopping.
+        wall_segments = [
+            (-2.5, 1.25, 5.0, 0.25),
+            (-2.5, -1.25, 5.0, 0.25),
+            (0.0, -1.25, 0.25, 3.0),
+            (1.5, 0.25, 3.0, 0.25),
+            (1.5, 2.25, 3.0, 0.25),
+            (3.0, 1.25, 0.25, 2.0),
+        ]
+
+        static_obstacles = [
+            (-1.0, 0.65, 0.45, 0.45),
+            (1.4, 1.6, 0.45, 0.45),
+        ]
+
+        dynamic_lanes = [
+            (1.8, 2.0, 1.8, 0.4),       # obstacle comes from blind branch
+            (2.6, 0.5, 0.6, 0.5),
+        ]
+
+        start = (-4.2, 0.0)
+        goal = (2.4, 1.5)
+
+    elif name == "static_dynamic":
+        # Static clutter plus moving obstacles.
+        # Tests whether RL can keep moving instead of conservative stop-and-go.
+        wall_segments = [
+            (0.0,  2.0, 10.0, 0.25),
+            (0.0, -2.0, 10.0, 0.25),
+            (-5.0, 0.0, 0.25, 4.0),
+            (5.0,  0.0, 0.25, 4.0),
+        ]
+
+        static_obstacles = [
+            (-3.0, 0.7, 0.55, 0.55),
+            (-1.6, -0.7, 0.55, 0.55),
+            (-0.2, 0.7, 0.55, 0.55),
+            (1.2, -0.7, 0.55, 0.55),
+            (2.6, 0.7, 0.55, 0.55),
+        ]
+
+        dynamic_lanes = [
+            (-2.3, -1.6, -2.3, 1.6),
+            (0.5, 1.6, 0.5, -1.6),
+            (3.2, -1.6, 3.2, 1.6),
+        ]
+
+        start = (-4.4, 0.0)
+        goal = (4.4, 0.0)
+
+    elif name == "crossing_stream":
+        # Multiple moving obstacles crossing the path at different phases.
+        # This directly targets dynamic obstacle benchmarking.
+        wall_segments = [
+            (0.0,  1.8, 10.0, 0.25),
+            (0.0, -1.8, 10.0, 0.25),
+            (-5.0, 0.0, 0.25, 3.6),
+            (5.0,  0.0, 0.25, 3.6),
+        ]
+
+        static_obstacles = [
+            (-3.5, -0.9, 0.45, 0.45),
+            (3.5, 0.9, 0.45, 0.45),
+        ]
+
+        dynamic_lanes = [
+            (-3.0, -1.5, -3.0, 1.5),
+            (-1.5, 1.5, -1.5, -1.5),
+            (0.0, -1.5, 0.0, 1.5),
+            (1.5, 1.5, 1.5, -1.5),
+            (3.0, -1.5, 3.0, 1.5),
+        ]
+
+        start = (-4.4, 0.0)
+        goal = (4.4, 0.0)
+
+    else:
+        raise ValueError(f"Unknown scenario: {name}")
+
+    return wall_segments, static_obstacles, dynamic_lanes, start, goal

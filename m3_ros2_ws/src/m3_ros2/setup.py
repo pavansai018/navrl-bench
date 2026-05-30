@@ -25,6 +25,7 @@ setup(
         *package_files('meshes'),
         *package_files('urdf'),
         *package_files('worlds'),
+        *package_files('models'),
         *package_files('config'),
         *package_files('launch'),
         *package_files('maps'),

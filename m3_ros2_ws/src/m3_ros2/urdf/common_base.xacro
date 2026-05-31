@@ -377,7 +377,7 @@
     <child
       link="${prefix}rwheel1_Link" />
     <axis
-      xyz="0 0 1" />
+      xyz="0 0 -1" />
   </joint>
 
   <!-- right rear wheel -->
@@ -432,7 +432,7 @@
     <child
       link="${prefix}rwheel2_Link" />
     <axis
-      xyz="0 0 1" />
+      xyz="0 0 -1" />
   </joint>
 
   </xacro:macro>

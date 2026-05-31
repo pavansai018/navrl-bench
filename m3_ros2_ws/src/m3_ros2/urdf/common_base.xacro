@@ -124,7 +124,7 @@
     </link>
     <joint
       name="${prefix}simcamera-Joint"
-      type="continuous">
+      type="fixed">
       <origin
         xyz="0 0 0"
         rpy="-1.57 0 -1.57" />
@@ -132,8 +132,8 @@
         link="${prefix}camera_link" />
       <child
         link="${prefix}ascamera_hp60c_camera_link_0" />
-      <axis
-        xyz="0 0 1" />
+      <!-- <axis
+        xyz="0 0 1" /> -->
     </joint>
   </xacro:if>
 

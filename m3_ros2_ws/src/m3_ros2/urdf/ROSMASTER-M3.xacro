@@ -126,7 +126,9 @@
       name="m3_mecanum_pose_drive::MecanumPoseDriveSystem">
 
       <topic>/cmd_vel</topic>
-      <base_link>$(arg prefix)base_link</base_link>
+      <!-- <base_link>$(arg prefix)base_link</base_link> -->
+      <base_link>$(arg prefix)base_footprint</base_link>
+
 
       <front_left_joint>$(arg prefix)lwheel1_Joint</front_left_joint>
       <rear_left_joint>$(arg prefix)lwheel2_Joint</rear_left_joint>
@@ -164,6 +166,97 @@
       <child_frame_id>base_link</child_frame_id>
     </plugin>
   </gazebo> -->
+    <gazebo reference="$(arg prefix)laser0_frame">
+        <sensor name='gpu_lidar0' type='gpu_lidar'>
+            <pose>0 0 0 0 0 0</pose>
+            <topic>/scan0</topic>
+            <!-- <ignition_frame_id>lidar_link</ignition_frame_id> -->
+            <frame_name>$(arg prefix)laser0_frame</frame_name>
+            <gz_frame_id>$(arg prefix)laser0_frame</gz_frame_id>
+            <update_rate>6</update_rate>
+            <lidar>
+                <scan>
+                <horizontal>
+                    <samples>667</samples>
+                    <resolution>1</resolution>
+                    <min_angle>-3.14159</min_angle>
+                    <max_angle>3.14159</max_angle>
+                </horizontal>
+                <vertical>
+                    <samples>1</samples>
+                    <resolution>1</resolution>
+                    <min_angle>0.0</min_angle>
+                    <max_angle>0.0</max_angle>
+                </vertical>
+                </scan>
+                <range>
+                    <min>0.05</min>
+                    <max>12.0</max>
+                    <resolution>0.01</resolution>
+                </range>
+                <noise>
+                    <type>gaussian</type>
+                    <mean>0.0</mean>
+                    <stddev>0.02</stddev>
+                </noise>
+            </lidar>
+            <always_on>true</always_on>
+            <visualize>true</visualize>
+        </sensor>
+    </gazebo>
+
+    <gazebo reference="$(arg prefix)laser1_frame">
+        <sensor name='gpu_lidar1' type='gpu_lidar'>
+            <pose>0 0 0 0 0 0</pose>
+            <topic>/scan1</topic>
+            <!-- <ignition_frame_id>lidar_link</ignition_frame_id> -->
+            <frame_name>$(arg prefix)laser1_frame</frame_name>
+            <gz_frame_id>$(arg prefix)laser1_frame</gz_frame_id>
+            <update_rate>6</update_rate>
+            <lidar>
+                <scan>
+                <horizontal>
+                    <samples>667</samples>
+                    <resolution>1</resolution>
+                    <min_angle>-3.14159</min_angle>
+                    <max_angle>3.14159</max_angle>
+                </horizontal>
+                <vertical>
+                    <samples>1</samples>
+                    <resolution>1</resolution>
+                    <min_angle>0.0</min_angle>
+                    <max_angle>0.0</max_angle>
+                </vertical>
+                </scan>
+                <range>
+                    <min>0.05</min>
+                    <max>12.0</max>
+                    <resolution>0.01</resolution>
+                </range>
+                <noise>
+                    <type>gaussian</type>
+                    <mean>0.0</mean>
+                    <stddev>0.02</stddev>
+                </noise>
+            </lidar>
+            <always_on>true</always_on>
+            <visualize>true</visualize>
+        </sensor>
+    </gazebo>
+    <!-- Joint state publisher (for /joint_states topic) -->
+    <gazebo>
+      <plugin
+        filename="gz-sim-joint-state-publisher-system"
+        name="gz::sim::systems::JointStatePublisher">
+        <topic>joint_states</topic>
+
+      </plugin>
+    </gazebo>
+    <gazebo>    
+        <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+            <render_engine>ogre2</render_engine>
+        </plugin>
+    </gazebo>
 </robot>
 
 

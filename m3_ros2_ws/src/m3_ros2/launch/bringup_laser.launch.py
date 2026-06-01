@@ -1,7 +1,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument,GroupAction,IncludeLaunchDescription,LogInfo,TimerAction
+from launch.actions import DeclareLaunchArgument,GroupAction,IncludeLaunchDescription,LogInfo,TimerAction, ExecuteProcess
 from launch_ros.actions import  Node, PushRosNamespace,ComposableNodeContainer
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition
@@ -11,8 +11,11 @@ from colorama import Fore
 
 
 def generate_launch_description()->LaunchDescription:
-    LASER_TYPE = 'dual' #os.environ.get('LASER_TYPE', 'single')     
-
+    LASER_TYPE = 'dual' #os.environ.get('LASER_TYPE', 'single')   
+    declare_use_sim_time_cmd = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='true',
+        description='Use simulation (Gazebo) clock if true')
     # 根据LASER_TYPE设置不同的激光雷达话题Different lidar topics are set according to LASER_TYPE.
     if LASER_TYPE == 'dual':
         laserscan_topics = '/scan0 /scan1'
@@ -43,7 +46,6 @@ def generate_launch_description()->LaunchDescription:
     # 初始化变量Initialize Arguments 
     namespace = LaunchConfiguration('namespace')
     use_composition = LaunchConfiguration('use_composition')
-    use_sim_time = LaunchConfiguration('use_sim_time')
     config_file = os.path.join(get_package_share_directory('m3_ros2'), 'config', 'common_param.yaml')
 
     #话题重映射Topic Remapping
@@ -51,18 +53,18 @@ def generate_launch_description()->LaunchDescription:
                 ('/scan', [namespace, '/scan_multi'])]    #滤波前激光雷达话题LiDAR topic before filtering
     
     #机器人状态发布节点，雷达融合和过滤必须先发布机器人模型tf状态Robot state publishing node, radar fusion and filtering must first publish the robot model tf state
-    robot_display=IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(
-            get_package_share_directory('m3_ros2'),
-            'launch',
-            'rviz.display.launch.py'
-            )),
-        launch_arguments={
-            'prefix': namespace,
-            'gui': 'False'  #仅限用户单独调试时设置为True，一般情况下设置为False Set to True only when the user is debugging alone; otherwise, set to False.
-        }.items(),
-    )
-    
+    # robot_display=IncludeLaunchDescription(
+    #     PythonLaunchDescriptionSource(os.path.join(
+    #         get_package_share_directory('m3_ros2'),
+    #         'launch',
+    #         'rviz.display.launch.py'
+    #         )),
+    #     launch_arguments={
+    #         'prefix': namespace,
+    #         'gui': 'False'  #仅限用户单独调试时设置为True，一般情况下设置为False Set to True only when the user is debugging alone; otherwise, set to False.
+    #     }.items(),
+    # )
+
     #独立方式启动雷达处理节点Start the radar processing node in standalone mode
     load_nodes = GroupAction(
         condition=IfCondition(PythonExpression(['not ', use_composition])),
@@ -75,7 +77,8 @@ def generate_launch_description()->LaunchDescription:
                 name='laserscan_multi_merger',
                 parameters=[config_file,
                             {'laserscan_topics': laserscan_topics},
-                            {'destination_frame': multi_frame}
+                            {'destination_frame': multi_frame},
+                            {'use_sim_time': True},
                            ],
             ),
             # 激光雷达数据过滤LiDAR data filtering
@@ -83,7 +86,7 @@ def generate_launch_description()->LaunchDescription:
                 package="laser_filters",
                 executable="scan_to_scan_filter_chain",
                 name='laser_filter',
-                parameters=[config_file],
+                parameters=[config_file, {'use_sim_time': True},],
                 remappings=remappings
             ),
             #日志打印Log Printing
@@ -111,7 +114,8 @@ def generate_launch_description()->LaunchDescription:
                             name='laserscan_multi_merger',
                             parameters=[config_file,
                                         {'laserscan_topics': laserscan_topics},
-                                        {'destination_frame': multi_frame}
+                                        {'destination_frame': multi_frame},
+                                        {'use_sim_time': True},
                                     ],
                             extra_arguments=[{'use_intra_process_comms': True}],
                         ),
@@ -120,7 +124,7 @@ def generate_launch_description()->LaunchDescription:
                             package='laser_filters',
                             plugin='ScanToScanFilterChain',
                             name='laser_filter',
-                            parameters=[config_file],
+                            parameters=[config_file, {'use_sim_time': True},],
                             remappings=remappings,
                             extra_arguments=[{'use_intra_process_comms': True}],
                         ),
@@ -139,9 +143,11 @@ def generate_launch_description()->LaunchDescription:
      )
 
     ld = []
+    ld.append(declare_use_sim_time_cmd)
     ld.extend(declared_arguments)
-    ld.append(robot_display)
+    # ld.append(robot_display)
     ld.append(load_nodes) 
     ld.append(delay_start_composable_nodes)
+    # ld.append(rviz_node)
 
     return LaunchDescription(ld)

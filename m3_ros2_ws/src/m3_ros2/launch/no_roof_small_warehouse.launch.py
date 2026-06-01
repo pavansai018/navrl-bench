@@ -18,7 +18,7 @@ from ament_index_python.packages import get_package_share_directory
 
 import launch
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, SetEnvironmentVariable, TimerAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression, Command, PathJoinSubstitution, FindExecutable
@@ -108,22 +108,32 @@ def generate_launch_description():
         package='robot_state_publisher',
         executable='robot_state_publisher',
         output='both',
-        parameters=[{'robot_description': robot_description_content}],
+        parameters=[{'robot_description': robot_description_content, 'use_sim_time': True,}],
     )
-    
-    rviz_config_file= os.path.join(pkg_share, 'rviz', 'laser_view.rviz')
-    bringup_laser_launch=ExecuteProcess(
-                cmd=['ros2', 'launch', 'm3_ros2','bringup_laser.launch.py'],
+
+    # Wrap robot_state_publisher in a TimerAction
+    delayed_rsp = TimerAction(
+        period=3.0,   # Wait for Gazebo to publish /clock first
+        actions=[robot_state_publisher_node]
+    )
+
+    # rviz_config_file= os.path.join(pkg_share, 'rviz', 'laser_view.rviz')
+    # bringup_laser_launch=ExecuteProcess(
+    #             cmd=['ros2', 'launch', 'm3_ros2','bringup_laser.launch.py'],
+    #             output='screen'
+    #         )
+    bringup_slam_launch=ExecuteProcess(
+                cmd=['ros2', 'launch', 'm3_ros2','slam_toolbox_vanilla.launch.py'],
                 output='screen'
             )
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        arguments=['-d', rviz_config_file],
-        output='screen',
-        parameters=[{'use_sim_time': use_sim_time}],
-    )
+    # rviz_node = Node(
+    #     package='rviz2',
+    #     executable='rviz2',
+    #     name='rviz2',
+    #     arguments=['-d', rviz_config_file],
+    #     output='screen',
+    #     parameters=[{'use_sim_time': use_sim_time}],
+    # )
     # spawner_joint_state = Node(
     #     package='controller_manager',
     #     executable='spawner',
@@ -146,13 +156,13 @@ def generate_launch_description():
             "/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist",
             # GZ -> ROS
             "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
-            "/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry",
-            "/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
+            "/odom_raw@nav_msgs/msg/Odometry[gz.msgs.Odometry",
+            # "/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
             # "/tf_static@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
             "/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model",
             "/scan0@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan",
             "/scan1@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan",
-            "/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU",
+            "/imu/data_raw@sensor_msgs/msg/Imu[gz.msgs.IMU",
             '/camera@sensor_msgs/msg/Image@gz.msgs.Image',
             '/camera/depth_image@sensor_msgs/msg/Image@gz.msgs.Image',
             '/camera/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo',
@@ -172,11 +182,13 @@ def generate_launch_description():
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(set_gazebo_model_path)
     ld.add_action(gz_sim)
-    ld.add_action(robot_state_publisher_node)
+    # ld.add_action(robot_state_publisher_node)
+    ld.add_action(delayed_rsp)
     ld.add_action(gz_spawn_entity)
     ld.add_action(gz_ros2_bridge)
-    ld.add_action(bringup_laser_launch)
-    ld.add_action(rviz_node)
+    # ld.add_action(bringup_laser_launch)
+    ld.add_action(bringup_slam_launch)
+    # ld.add_action(rviz_node)
     # ld.add_action(spawner_joint_state)
     # ld.add_action(spawner_mecanum)
 

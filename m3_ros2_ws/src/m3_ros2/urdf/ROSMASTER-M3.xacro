@@ -141,6 +141,11 @@
       <cmd_timeout>0.5</cmd_timeout>
       <yaw_correction_gain>50.0</yaw_correction_gain>
 
+      <odom_topic>/odom_raw</odom_topic>
+      <tf_topic>/tf_gz_unused</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>$(arg prefix)base_footprint</child_frame_id>
+      <odom_publish_frequency>50</odom_publish_frequency>
     </plugin>
   </gazebo>
   <!-- <gazebo>
@@ -249,8 +254,25 @@
         filename="gz-sim-joint-state-publisher-system"
         name="gz::sim::systems::JointStatePublisher">
         <topic>joint_states</topic>
+        <joint_name>lwheel1_Joint</joint_name>
+        <joint_name>lwheel2_Joint</joint_name>
+        <joint_name>rwheel1_Joint</joint_name>
+        <joint_name>rwheel2_Joint</joint_name>
 
       </plugin>
+    </gazebo>
+    <gazebo reference="$(arg prefix)imu_frame">
+        <sensor name="imu" type="imu">
+            <always_on>1</always_on>
+            <update_rate>50</update_rate>
+            <visualize>true</visualize>
+            <topic>imu/data_raw</topic>
+            <enable_metrics>true</enable_metrics>
+            <ignition_frame_id>$(arg prefix)imu_frame</ignition_frame_id>
+        </sensor>
+    </gazebo>
+    <gazebo>
+        <plugin filename="libignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu"/>
     </gazebo>
     <gazebo>    
         <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">

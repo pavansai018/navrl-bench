@@ -116,12 +116,13 @@ def generate_launch_description():
                 cmd=['ros2', 'launch', 'm3_ros2','bringup_laser.launch.py'],
                 output='screen'
             )
-    rviz_node=  Node(
+    rviz_node = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
         arguments=['-d', rviz_config_file],
-        output='screen'
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
     )
 
     # spawner_joint_state = Node(

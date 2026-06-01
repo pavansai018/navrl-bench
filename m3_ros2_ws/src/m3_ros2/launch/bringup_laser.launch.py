@@ -88,7 +88,7 @@ def generate_launch_description()->LaunchDescription:
             ),
             #日志打印Log Printing
             LogInfo(
-                    msg=[Fore.GREEN+'LASER start sucefully!,Start by independent node',Fore.RESET]
+                    msg=[Fore.GREEN+'LASER started successfully! Started as independent nodes',Fore.RESET]
                 )
         ]
     )

@@ -41,8 +41,9 @@ def generate_launch_description()->LaunchDescription:
     )
 
     # 初始化变量Initialize Arguments 
-    namespace=LaunchConfiguration("namespace")
-    use_composition=LaunchConfiguration("use_composition")
+    namespace = LaunchConfiguration('namespace')
+    use_composition = LaunchConfiguration('use_composition')
+    use_sim_time = LaunchConfiguration('use_sim_time')
     config_file = os.path.join(get_package_share_directory('m3_ros2'), 'config', 'common_param.yaml')
 
     #话题重映射Topic Remapping

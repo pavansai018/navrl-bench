@@ -1,0 +1,14 @@
+laserscan_multi_merger:
+  ros__parameters:
+    destination_frame: "laser23_frame"
+    cloud_destination_topic: "/merged_cloud"
+    scan_destination_topic: "/scan_multi"
+    laserscan_topics: "/scan2 /scan3"
+    angle_min: -3.14
+    angle_max: 3.14
+    angle_increment: 0.009442231617867947
+    scan_time: 0.0
+    range_min: 0.05
+    range_max: 12.0
+
+

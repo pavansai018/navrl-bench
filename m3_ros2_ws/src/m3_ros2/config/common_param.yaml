@@ -1,0 +1,103 @@
+#传感器相关参数配置文件Sensor-related parameter configuration file
+
+#雷达过滤节点配置Radar filter node configuration
+laser_filter:
+  ros__parameters:
+    filter1:
+      name: box_filter
+      type: laser_filters/LaserScanBoxFilter
+      params:
+        box_frame: "base_link"  # 矩形框所在的坐标系（通常为机器人基坐标系）
+        min_x: -0.12           # 矩形框x轴最小值
+        max_x: 0.12            # 矩形框x轴最大值
+        min_y: -0.15           # 矩形框y轴最小值
+        max_y: 0.15            # 矩形框y轴最大值
+        min_z: -0.5            # 矩形框z轴最小值（激光雷达通常在z=0附近，可设为负值）
+        max_z: 0.5             # 矩形框z轴最大值
+        invert: false         # false=移除框内的点；true=保留框内的点，移除框外的点
+
+#雷达融合节点配置Radar Fusion Node Configuration
+laserscan_multi_merger:
+  ros__parameters:
+    destination_frame: "base_link"
+    cloud_destination_topic: "/merged_cloud"
+    scan_destination_topic: "/scan_multi"
+    laserscan_topics: "/scan2 /scan3"
+    angle_min: -3.14
+    angle_max: 3.14
+    angle_increment: 0.008726646  # 约等于0.5度的弧度值
+    scan_time: 0.0
+    range_min: 0.05
+    range_max: 12.0
+
+#激光雷达里程计节点配置LiDAR Odometry Node Configuration
+rf2o_laser_odometry:                          
+  ros__parameters:
+    laser_scan_topic :        '/scan'         # 订阅激光雷达发布的话题
+    odom_topic :              '/odom_rf2o'    # 发布里程计话题
+    publish_tf :              False           #是否发布 TF 变换，odom_frame_id到base_frame_id
+    base_frame_id :           'base_footprint'     #指定机器人基坐标系  
+    odom_frame_id :           'laser_odom'    #指定里程计坐标系
+    init_pose_from_topic :    ''              #：指定用于初始化机器人初始位姿的话题（可选）
+    freq :                    6.0             #：里程计发布频率(需要和激光雷达的频率一致)
+
+# IMU滤波：互补滤波方式配置
+complementary_filter_gain_node:
+  ros__parameters:
+    gain_acc: 0.01              # 加速度校正增益（控制位置修正强度，0~0.1）   
+    gain_mag: 0.01              # 磁力计校正增益（控制航向角修正强度，0~0.1，仅use_mag为true时有效）
+    bias_alpha: 0.01            # 陀螺仪偏置估计系数（控制偏置跟踪平滑度，0~0.1，仅do_bias_estimation为true时有效）
+    do_bias_estimation: true    # 是否启用陀螺仪偏置估计（true/false，长期场景建议true）
+    do_adaptive_gain: true      # 是否启用自适应增益（true/false，动态/静态切换场景建议true）
+    use_mag: true              # 是否使用磁力计（磁场干扰严重时设为false）
+    fixed_frame: "odom"         # 固定坐标系（如"odom"、"map"，需与系统其他模块一致）
+    publish_tf: false           #是否发布 TF 坐标变换，布从 fixed_frame 到 IMU 传感器坐标系的姿态变换
+    reverse_tf: false           #是否反转 TF 变换的方向，（默认）：TF 变换为 fixed_frame → IMU坐标系
+    constant_dt: 0.0            # 固定时间间隔（0.0表示使用消息时间戳计算dt，否则设为固定值如0.01s）
+    publish_debug_topics: false #是否发布调试话题（如imu/rpy/filtered，调试时设为true）
+    qos_overrides:    # QoS配置（订阅imu/data_raw和imu/mag的消息质量）
+      /imu/data_raw:
+        subscription:
+          depth: 10  # 消息队列深度
+          durability: volatile  #  durability策略（volatile/transient_local）
+          history: keep_last  # 历史记录策略（keep_last/keep_all）
+          reliability: reliable  # 可靠性策略（reliable/best_effort）
+      /imu/mag:
+        subscription:
+          depth: 10
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+
+# IMU滤波：Madgwick方式进行滤波
+madgwick_filter_node:
+  ros__parameters:
+    stateless: false              #是否启用无状态模式,false（默认）：滤波器会保存历史状态（如当前姿态），持续更新, true：不保存状态，每次计算仅依赖当前输入数据
+    use_mag: false                 #是否使用磁力计
+    publish_tf: false              #是否发布 TF 坐标变换，布从 fixed_frame 到 IMU 传感器坐标系的姿态变换
+    reverse_tf: false             #是否反转 TF 变换的方向，（默认）：TF 变换为 fixed_frame → IMU坐标系
+    fixed_frame: "odom"           #固定参考坐标系的名称（如 odom 或 map），作为姿态估计的世界坐标系基准
+    constant_dt: 0.0              #强制固定时间间隔（秒）用于滤波计算，0.0（默认）：使用输入数据的时间戳自动计算时间间隔，非零值：强制使用设定值（适用于传感器时间戳不稳定的情况）
+    publish_debug_topics: false   #是否发布调试话题
+    world_frame: "enu"            #世界坐标系的类型，enu（默认）：东 - 北 - 天坐标系（适用于大多数地面机器人）， ned：北 - 东 - 地坐标系（适用于水下 / 空中机器人）
+    gain: 0.4                     #滤波器增益（仅 Madgwick 算法）。值越大，传感器数据收敛越快，但对噪声更敏感；值越小，结果更平滑，但响应较慢
+    zeta: 0.0                     #阻尼系数（仅互补滤波器）。
+    mag_bias_x: 0.0               #磁力计的偏置补偿值（单位：特斯拉）。，用于消除磁力计的系统误差
+    mag_bias_z: 0.0
+    orientation_stddev: 0.0       #姿态估计的标准差（单位：弧度）。表示姿态估计的不确定性，用于滤波权重计算（通常设为 0.0，由算法自动调整）
+
+
+yolov11_track:
+  ros__parameters:
+    conf: 0.4                                                                            
+    iou: 0.3
+    max_det: 3
+    max_draw_points: 30
+    keep_dist: 1.0    
+    Kp: 0.5                                                                         
+    Ki: 0.0
+    Kd: 0.0
+    Kp_1: -0.1
+    Ki_1: 0.0
+    Kd_1: -0.3
+    max_integral: 1000.0

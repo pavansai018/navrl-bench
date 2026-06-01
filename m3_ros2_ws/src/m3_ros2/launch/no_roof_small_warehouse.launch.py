@@ -110,7 +110,20 @@ def generate_launch_description():
         output='both',
         parameters=[{'robot_description': robot_description_content}],
     )
-
+    
+    rviz_config_file= os.path.join(pkg_share, 'rviz', 'laser_view.rviz')
+    bringup_laser_launch=ExecuteProcess(
+                cmd=['ros2', 'launch', 'm3_ros2','bringup_laser.launch.py'],
+                output='screen'
+            )
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', rviz_config_file],
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
     # spawner_joint_state = Node(
     #     package='controller_manager',
     #     executable='spawner',
@@ -162,6 +175,8 @@ def generate_launch_description():
     ld.add_action(robot_state_publisher_node)
     ld.add_action(gz_spawn_entity)
     ld.add_action(gz_ros2_bridge)
+    ld.add_action(bringup_laser_launch)
+    ld.add_action(rviz_node)
     # ld.add_action(spawner_joint_state)
     # ld.add_action(spawner_mecanum)
 

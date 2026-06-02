@@ -7,11 +7,11 @@ laser_filter:
       name: box_filter
       type: laser_filters/LaserScanBoxFilter
       params:
-        box_frame: "base_link"  # 矩形框所在的坐标系（通常为机器人基坐标系）
-        min_x: -0.12           # 矩形框x轴最小值
-        max_x: 0.12            # 矩形框x轴最大值
-        min_y: -0.15           # 矩形框y轴最小值
-        max_y: 0.15            # 矩形框y轴最大值
+        box_frame: "base_footprint" #"base_link"  # 矩形框所在的坐标系（通常为机器人基坐标系）
+        min_x: -0.25 #-0.12           # 矩形框x轴最小值
+        max_x: 0.25 #0.12            # 矩形框x轴最大值
+        min_y: -0.22 #-0.15           # 矩形框y轴最小值
+        max_y: 0.22 #0.15            # 矩形框y轴最大值
         min_z: -0.5            # 矩形框z轴最小值（激光雷达通常在z=0附近，可设为负值）
         max_z: 0.5             # 矩形框z轴最大值
         invert: false         # false=移除框内的点；true=保留框内的点，移除框外的点
@@ -19,10 +19,10 @@ laser_filter:
 #雷达融合节点配置Radar Fusion Node Configuration
 laserscan_multi_merger:
   ros__parameters:
-    destination_frame: "base_link"
+    destination_frame: "lasersim_frame" #"base_link"
     cloud_destination_topic: "/merged_cloud"
     scan_destination_topic: "/scan_multi"
-    laserscan_topics: "/scan2 /scan3"
+    laserscan_topics: "/scan0 /scan1" #"/scan2 /scan3"
     angle_min: -3.14
     angle_max: 3.14
     angle_increment: 0.008726646  # 约等于0.5度的弧度值

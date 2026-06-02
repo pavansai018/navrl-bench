@@ -126,6 +126,10 @@ def generate_launch_description():
                 cmd=['ros2', 'launch', 'm3_ros2','slam_toolbox_vanilla.launch.py'],
                 output='screen'
             )
+    bringup_nav2_launch=ExecuteProcess(
+            cmd=['ros2', 'launch', 'm3_ros2','nav2.launch.py'],
+            output='screen'
+        )
     # rviz_node = Node(
     #     package='rviz2',
     #     executable='rviz2',
@@ -187,7 +191,8 @@ def generate_launch_description():
     ld.add_action(gz_spawn_entity)
     ld.add_action(gz_ros2_bridge)
     # ld.add_action(bringup_laser_launch)
-    ld.add_action(bringup_slam_launch)
+    # ld.add_action(bringup_slam_launch)
+    ld.add_action(bringup_nav2_launch)
     # ld.add_action(rviz_node)
     # ld.add_action(spawner_joint_state)
     # ld.add_action(spawner_mecanum)

@@ -79,6 +79,8 @@ def generate_launch_description()->LaunchDescription:
                             {'laserscan_topics': laserscan_topics},
                             {'destination_frame': multi_frame},
                             {'use_sim_time': True},
+                            {'input_queue_size': 50},   
+                            {'output_queue_size': 50}, 
                            ],
             ),
             # 激光雷达数据过滤LiDAR data filtering
@@ -86,7 +88,7 @@ def generate_launch_description()->LaunchDescription:
                 package="laser_filters",
                 executable="scan_to_scan_filter_chain",
                 name='laser_filter',
-                parameters=[config_file, {'use_sim_time': True},],
+                parameters=[config_file, {'use_sim_time': True}, {'input_queue_size': 50}, {'output_queue_size': 50}, ],
                 remappings=remappings
             ),
             #日志打印Log Printing
@@ -116,6 +118,8 @@ def generate_launch_description()->LaunchDescription:
                                         {'laserscan_topics': laserscan_topics},
                                         {'destination_frame': multi_frame},
                                         {'use_sim_time': True},
+                                        {'input_queue_size': 50},  
+                                        {'output_queue_size': 50},  
                                     ],
                             extra_arguments=[{'use_intra_process_comms': True}],
                         ),
@@ -124,7 +128,7 @@ def generate_launch_description()->LaunchDescription:
                             package='laser_filters',
                             plugin='ScanToScanFilterChain',
                             name='laser_filter',
-                            parameters=[config_file, {'use_sim_time': True},],
+                            parameters=[config_file, {'use_sim_time': True}, {'input_queue_size': 50}, {'output_queue_size': 50},],
                             remappings=remappings,
                             extra_arguments=[{'use_intra_process_comms': True}],
                         ),

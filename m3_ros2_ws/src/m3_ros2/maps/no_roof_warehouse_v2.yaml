@@ -1,0 +1,7 @@
+image: no_roof_warehouse_v2.pgm
+mode: trinary
+resolution: 0.050
+origin: [-7.958, -11.414, 0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

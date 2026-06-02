@@ -45,6 +45,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'keyboard_control = m3_ros2.keyboard_controller:main',
         ],
     },
 )

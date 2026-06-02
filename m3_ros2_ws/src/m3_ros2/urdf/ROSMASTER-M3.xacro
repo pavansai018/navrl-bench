@@ -127,7 +127,7 @@
 
       <topic>/cmd_vel</topic>
       <!-- <base_link>$(arg prefix)base_link</base_link> -->
-      <base_link>$(arg prefix)base_footprint</base_link>
+      <base_link>$(arg prefix)base_link</base_link>
 
 
       <front_left_joint>$(arg prefix)lwheel1_Joint</front_left_joint>

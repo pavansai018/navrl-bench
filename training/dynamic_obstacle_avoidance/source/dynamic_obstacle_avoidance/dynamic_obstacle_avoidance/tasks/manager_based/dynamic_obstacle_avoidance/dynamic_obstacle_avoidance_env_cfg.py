@@ -16,12 +16,12 @@ class DynamicObstacleAvoidanceM3SceneCfg(DynamicObstacleAvoidanceSceneCfg):
 @configclass
 class DynamicObstacleAvoidanceM3EnvCfg(DynamicObstacleAvoidanceEnvCfg):
         """ROSMASTER M3 dynamic obstacle avoidance environment."""
-        debug_draw_nav2: bool = True
-        debug_draw_lidar: bool = True
-        debug_draw_map: bool = True
-        debug_draw_path: bool = True
+        debug_draw_nav2: bool = False
+        debug_draw_lidar: bool = False
+        debug_draw_map: bool = False
+        debug_draw_path: bool = False
         scene: DynamicObstacleAvoidanceM3SceneCfg = DynamicObstacleAvoidanceM3SceneCfg(
             num_envs=512,
-            env_spacing=8.0,
+            env_spacing=22.0,
             replicate_physics=True,
         )

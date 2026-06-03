@@ -4,3 +4,4 @@
 m3_ros2_ws/build/
 m3_ros2_ws/install/
 m3_ros2_ws/log/
+m3_ros2_ws/src/nav_rl_bridge/rl_path_dataset/

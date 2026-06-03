@@ -112,6 +112,17 @@ def reset_nav2_path_and_debug_validate(
         final_goal_marker_cfg=final_goal_marker_cfg,
         max_path_points=max_path_points,
     )
+    _ensure_training_reward_buffers(env, max_path_points=max_path_points)
+
+    path = env.navrl_global_path_xy[env_ids]
+    diff = path[:, 1:, :] - path[:, :-1, :]
+    seg_len = torch.norm(diff, dim=-1)
+
+    env.navrl_path_cum_s[env_ids, :] = 0.0
+    env.navrl_path_cum_s[env_ids, 1:] = torch.cumsum(seg_len, dim=-1)
+
+    env.navrl_prev_progress_s[env_ids] = 0.0
+    env.navrl_prev_action_for_reward[env_ids] = 0.0
 
     validate_nav2_path_against_map(
         env=env,
@@ -184,7 +195,6 @@ def validate_nav2_path_against_map(
         else:
             print("[NAV2 MAP CHECK][OK] " + msg, flush=True)
 
-
 def draw_nav2_map_path_scan_debug(
     env,
     env_ids: torch.Tensor,
@@ -196,132 +206,229 @@ def draw_nav2_map_path_scan_debug(
     max_range: float = 4.0,
     step_size: float = 0.05,
 ):
-    """Draw map, path, robot scan using Isaac DebugDraw.
+    """Draw map, path, and lidar scan using Isaac DebugDraw.
 
-    This is debug visualization only:
+    Debug only:
     - no PhysX objects
     - no collision
     - no lidar interference
-    - other robots are ignored
+    - other robots are still ignored by map_based_scan
     """
+
     if not bool(getattr(env.cfg, "debug_draw_nav2", True)):
         return
+
     draw_map = bool(getattr(env.cfg, "debug_draw_map", True))
     draw_path = bool(getattr(env.cfg, "debug_draw_path", True))
     draw_lidar = bool(getattr(env.cfg, "debug_draw_lidar", True))
-    _ensure_nav2_map(env)
 
-    # Draw only first env for debug. Multi-env debug drawing will become unreadable.
-    env_id = int(env_ids[0].item()) if len(env_ids) > 0 else 0
+    _ensure_nav2_map(env)
 
     draw = _get_debug_draw()
     _clear_debug_draw(draw)
 
-    origin = env.scene.env_origins[env_id, :2]
+    robot = env.scene[asset_cfg.name]
 
-    # ----------------------------
-    # 1. Draw occupied map points
-    # ----------------------------
+    # If env_ids is empty, draw all envs.
+    if env_ids is None or len(env_ids) == 0:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+
+    # DebugDraw can become heavy with many envs.
+    # For now, draw all envs passed by EventManager.
+    draw_env_ids = env_ids
+
+    # --------------------------------------------------
+    # Draw map/path only for first env to avoid clutter
+    # --------------------------------------------------
+    first_env_id = int(draw_env_ids[0].item())
+    # first_origin = env.scene.env_origins[first_env_id, :2]
+
+    # --------------------------------------------------
+    # Draw occupied map for ALL envs
+    # --------------------------------------------------
     if draw_map:
         occ_xy = env.nav2_occupancy_map.debug_occupied_world_points(
             stride=map_stride,
             max_points=max_map_points,
         )
 
-        occ_world = occ_xy + origin[None, :]
-        occ_points = [
-            (float(p[0].item()), float(p[1].item()), 0.25)
-            for p in occ_world
-        ]
-        occ_colors = [(0.02, 0.02, 0.02, 1.0)] * len(occ_points)
-        occ_sizes = [6.0] * len(occ_points)
+        all_occ_points = []
 
-        if len(occ_points) > 0:
-            draw.draw_points(occ_points, occ_colors, occ_sizes)
+        for eid_t in draw_env_ids:
+            eid = int(eid_t.item())
+            origin = env.scene.env_origins[eid, :2]
 
+            occ_world = occ_xy + origin[None, :]
+
+            for p in occ_world:
+                all_occ_points.append(
+                    (
+                        float(p[0].item()),
+                        float(p[1].item()),
+                        0.25,
+                    )
+                )
+
+        if len(all_occ_points) > 0:
+            draw.draw_points(
+                all_occ_points,
+                [(0.02, 0.02, 0.02, 1.0)] * len(all_occ_points),
+                [6.0] * len(all_occ_points),
+            )
     # ----------------------------
-    # 2. Draw Nav2 global path
+    # Draw Nav2 global path for ALL envs
     # ----------------------------
-    valid_count = int(env.navrl_path_valid_count[env_id].item())
+    if draw_path:
+        all_p0 = []
+        all_p1 = []
 
-    if draw_path and valid_count > 1:
-        path_xy = env.navrl_global_path_xy[env_id, :valid_count:path_stride]
-        path_world = path_xy + origin[None, :]
+        for eid_t in draw_env_ids:
+            eid = int(eid_t.item())
+            origin = env.scene.env_origins[eid, :2]
 
-        p0 = []
-        p1 = []
+            valid_count = int(env.navrl_path_valid_count[eid].item())
+            if valid_count <= 1:
+                continue
 
-        for i in range(path_world.shape[0] - 1):
-            a = path_world[i]
-            b = path_world[i + 1]
-            p0.append((float(a[0].item()), float(a[1].item()), 0.12))
-            p1.append((float(b[0].item()), float(b[1].item()), 0.12))
+            path_xy = env.navrl_global_path_xy[eid, :valid_count:path_stride]
+            path_world = path_xy + origin[None, :]
 
-        colors = [(0.0, 0.3, 1.0, 1.0)] * len(p0)
-        sizes = [3.0] * len(p0)
+            for i in range(path_world.shape[0] - 1):
+                a = path_world[i]
+                b = path_world[i + 1]
 
-        if len(p0) > 0:
-            draw.draw_lines(p0, p1, colors, sizes)
+                all_p0.append((float(a[0].item()), float(a[1].item()), 0.12))
+                all_p1.append((float(b[0].item()), float(b[1].item()), 0.12))
 
-    # ----------------------------
-    # 3. Draw final goal
-    # ----------------------------
+        if len(all_p0) > 0:
+            draw.draw_lines(
+                all_p0,
+                all_p1,
+                [(0.0, 0.3, 1.0, 1.0)] * len(all_p0),
+                [3.0] * len(all_p0),
+            )
+
+    # Goal points for all envs
     if hasattr(env, "navrl_final_goal_xy"):
-        g = env.navrl_final_goal_xy[env_id] + origin
-        goal_points = [(float(g[0].item()), float(g[1].item()), 0.35)]
-        draw.draw_points(goal_points, [(0.0, 1.0, 0.0, 1.0)], [18.0])
+        goal_points = []
+
+        for eid_t in draw_env_ids:
+            eid = int(eid_t.item())
+            origin = env.scene.env_origins[eid, :2]
+            g = env.navrl_final_goal_xy[eid] + origin
+
+            goal_points.append((float(g[0].item()), float(g[1].item()), 0.35))
+
+        if len(goal_points) > 0:
+            draw.draw_points(
+                goal_points,
+                [(0.0, 1.0, 0.0, 1.0)] * len(goal_points),
+                [18.0] * len(goal_points),
+            )
+
     if not draw_lidar:
         return
-    # ----------------------------
-    # 4. Draw robot map-based scan
-    # ----------------------------
-    robot = env.scene[asset_cfg.name]
 
-    robot_xy_world = robot.data.root_pos_w[env_id, :2]
-    robot_xy = robot_xy_world - origin
-
-    q = robot.data.root_quat_w[env_id]
-    qw, qx, qy, qz = q[0], q[1], q[2], q[3]
-
-    yaw = torch.atan2(
-        2.0 * (qw * qz + qx * qy),
-        1.0 - 2.0 * (qy * qy + qz * qz),
-    )
-
-    robot_xy_batch = robot_xy.unsqueeze(0)
-    yaw_batch = yaw.unsqueeze(0)
-
-    scan_norm = env.nav2_occupancy_map.raycast_scan(
-        robot_xy=robot_xy_batch,
-        robot_yaw=yaw_batch,
-        num_rays=num_rays,
-        max_range=max_range,
-        step_size=step_size,
-        unknown_is_occupied=True,
-    )[0]
-
-    scan_m = scan_norm * max_range
+    # --------------------------------------------------
+    # Draw lidar scan for ALL envs
+    # --------------------------------------------------
+    all_start_lines = []
+    all_end_lines = []
+    all_hit_points = []
 
     ray_angles = torch.linspace(-math.pi, math.pi, num_rays, device=env.device)
-    world_angles = yaw + ray_angles
 
-    start_lines = []
-    end_lines = []
-    hit_points = []
+    for eid_t in draw_env_ids:
+        eid = int(eid_t.item())
 
-    robot_draw_xy = robot_xy + origin
+        origin = env.scene.env_origins[eid, :2]
 
-    for i in range(num_rays):
-        hx = robot_xy[0] + torch.cos(world_angles[i]) * scan_m[i]
-        hy = robot_xy[1] + torch.sin(world_angles[i]) * scan_m[i]
+        robot_xy_world = robot.data.root_pos_w[eid, :2]
+        robot_xy = robot_xy_world - origin
 
-        hit_world = torch.stack([hx, hy]) + origin
+        q = robot.data.root_quat_w[eid]
+        qw, qx, qy, qz = q[0], q[1], q[2], q[3]
 
-        start_lines.append((float(robot_draw_xy[0].item()), float(robot_draw_xy[1].item()), 0.18))
-        end_lines.append((float(hit_world[0].item()), float(hit_world[1].item()), 0.18))
-        hit_points.append((float(hit_world[0].item()), float(hit_world[1].item()), 0.20))
+        yaw = torch.atan2(
+            2.0 * (qw * qz + qx * qy),
+            1.0 - 2.0 * (qy * qy + qz * qz),
+        )
 
-    scan_colors = [(1.0, 0.0, 0.0, 0.65)] * len(start_lines)
-    scan_sizes = [1.0] * len(start_lines)
-    draw.draw_lines(start_lines, end_lines, scan_colors, scan_sizes)
-    draw.draw_points(hit_points, [(1.0, 0.0, 0.0, 1.0)] * len(hit_points), [5.0] * len(hit_points))
+        scan_norm = env.nav2_occupancy_map.raycast_scan(
+            robot_xy=robot_xy.unsqueeze(0),
+            robot_yaw=yaw.unsqueeze(0),
+            num_rays=num_rays,
+            max_range=max_range,
+            step_size=step_size,
+            unknown_is_occupied=True,
+        )[0]
+
+        scan_m = scan_norm * max_range
+        world_angles = yaw + ray_angles
+
+        robot_draw_xy = robot_xy + origin
+
+        for i in range(num_rays):
+            hx = robot_xy[0] + torch.cos(world_angles[i]) * scan_m[i]
+            hy = robot_xy[1] + torch.sin(world_angles[i]) * scan_m[i]
+
+            hit_world = torch.stack([hx, hy]) + origin
+
+            all_start_lines.append(
+                (
+                    float(robot_draw_xy[0].item()),
+                    float(robot_draw_xy[1].item()),
+                    0.18,
+                )
+            )
+
+            all_end_lines.append(
+                (
+                    float(hit_world[0].item()),
+                    float(hit_world[1].item()),
+                    0.18,
+                )
+            )
+
+            all_hit_points.append(
+                (
+                    float(hit_world[0].item()),
+                    float(hit_world[1].item()),
+                    0.20,
+                )
+            )
+
+    if len(all_start_lines) > 0:
+        draw.draw_lines(
+            all_start_lines,
+            all_end_lines,
+            [(1.0, 0.0, 0.0, 0.65)] * len(all_start_lines),
+            [1.0] * len(all_start_lines),
+        )
+
+        draw.draw_points(
+            all_hit_points,
+            [(1.0, 0.0, 0.0, 1.0)] * len(all_hit_points),
+            [5.0] * len(all_hit_points),
+        )
+
+def _ensure_training_reward_buffers(env, max_path_points: int = 600):
+    if not hasattr(env, "navrl_path_cum_s"):
+        env.navrl_path_cum_s = torch.zeros(
+            env.num_envs,
+            max_path_points,
+            device=env.device,
+        )
+
+    if not hasattr(env, "navrl_prev_progress_s"):
+        env.navrl_prev_progress_s = torch.zeros(
+            env.num_envs,
+            device=env.device,
+        )
+
+    if not hasattr(env, "navrl_prev_action_for_reward"):
+        env.navrl_prev_action_for_reward = torch.zeros(
+            env.num_envs,
+            3,
+            device=env.device,
+        )

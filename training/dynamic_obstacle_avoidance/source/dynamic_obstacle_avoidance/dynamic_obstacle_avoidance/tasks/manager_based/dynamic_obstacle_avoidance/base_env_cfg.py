@@ -180,9 +180,48 @@ class ObservationsCfg:
         def __post_init__(self) -> None:
             self.enable_corruption = False
             self.concatenate_terms = True
+        
+    @configclass
+    class CriticCfg(ObsGroup):
+        local_path_window = ObsTerm(
+            func=custom_observations.local_path_window,
+            params={
+                'num_points': 8,
+                'step': 8,
+            },
+        )
+
+        nav2_heading_error = ObsTerm(
+            func=custom_observations.nav2_path_heading_error,
+        )
+        nav2_cross_track_error = ObsTerm(
+            func=custom_observations.nav2_cross_track_error,
+        )
+
+        map_scan = ObsTerm(
+            func=custom_observations.map_based_scan,
+            params={
+                'num_rays': 72,
+                'max_range': 4.0,
+                'step_size': 0.05,
+            },
+        )
+
+        base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
+        base_ang_vel = ObsTerm(func=custom_observations.base_ang_vel)
+        previous_actions = ObsTerm(func=custom_observations.previous_action)
+
+        distance_to_goal = ObsTerm(func=custom_observations.distance_to_final_goal)
+        progress_fraction = ObsTerm(func=custom_observations.nav2_path_progress_fraction)
+        map_collision = ObsTerm(func=custom_observations.map_collision_observation)
+
+        def __post_init__(self) -> None:
+            self.enable_corruption = False
+            self.concatenate_terms = True
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
 
 
 @configclass
@@ -203,11 +242,11 @@ class EventCfg:
     draw_nav2_debug = EventTerm(
         func=custom_events.draw_nav2_map_path_scan_debug,
         mode="interval",
-        interval_range_s=(0.20, 0.20),
+        interval_range_s=(0.03, 0.030),
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "map_stride": 1,
-            "max_map_points": 30000,
+            "map_stride": 2,
+            "max_map_points": 6000,
             "path_stride": 4,
             "num_rays": 72,
             "max_range": 4.0,
@@ -218,8 +257,87 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms for RL local-controller and dynamic obstacle avoidance."""
-    pass
+    """
+    Reward terms for RL local-controller and dynamic obstacle avoidance.
+
+    progress:
+        positive when robot advances along Nav2 path
+
+    cross_track:
+        negative when robot drifts away from path
+
+    heading_alignment:
+        small positive when robot faces local path direction
+
+    map_collision:
+        large penalty when robot enters occupied map cells
+
+    final_goal:
+        large reward when goal reached
+
+    action_smoothness:
+        discourages jerky [vx, vy, wz]
+
+    time:
+        discourages wasting time
+    """
+
+    progress = RewTerm(
+        func=custom_rewards.progress_along_nav2_path,
+        weight=25.0,
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'max_step_progress': 0.05,
+        },
+    )
+
+    cross_track = RewTerm(
+        func=custom_rewards.nav2_cross_track_penalty,
+        weight=-2.0,
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'max_error': 1.0,
+        },
+    )
+
+    heading_alignment = RewTerm(
+        func=custom_rewards.nav2_heading_alignment_reward,
+        weight=0.5,
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'lookahead_index_offset': 4,
+        },
+    )
+
+    map_collision = RewTerm(
+        func=custom_rewards.map_collision_penalty,
+        weight=-25.0,
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'radius': 0.22,
+        },
+    )
+
+    final_goal = RewTerm(
+        func=custom_rewards.final_goal_reward,
+        weight=40.0,
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'threshold': 0.30,
+        },
+    )
+
+    action_smoothness = RewTerm(
+        func=custom_rewards.action_smoothness_penalty,
+        weight=-0.05,
+    )
+
+    time = RewTerm(
+        func=custom_rewards.time_penalty,
+        weight=-0.01,
+    )
+
+
     
 
 @configclass
@@ -265,10 +383,10 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     nav2_path_dataset_dir: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/nav_rl_bridge/rl_path_dataset/aws_warehouse"
     nav2_map_yaml_path: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/m3_ros2/maps/no_roof_warehouse.yaml"
 
-    debug_draw_nav2: bool = True
-    debug_draw_lidar: bool = True
-    debug_draw_map: bool = True
-    debug_draw_path: bool = True
+    debug_draw_nav2: bool = False
+    debug_draw_lidar: bool = False
+    debug_draw_map: bool = False
+    debug_draw_path: bool = False
     # Post initialization
     def __post_init__(self) -> None:
         """Post initialization."""

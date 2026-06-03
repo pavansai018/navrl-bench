@@ -216,12 +216,7 @@ def _ensure_nav2_map(env):
         )
 
 
-def map_based_scan(
-    env,
-    num_rays: int = 72,
-    max_range: float = 4.0,
-    step_size: float = 0.05,
-) -> torch.Tensor:
+def map_based_scan(env, num_rays: int = 72, max_range: float = 4.0, step_size: float = 0.05,) -> torch.Tensor:
     """Map-only lidar scan.
 
     This scan sees:
@@ -239,10 +234,42 @@ def map_based_scan(
     yaw = _robot_yaw(env)
 
     return env.nav2_occupancy_map.raycast_scan(
-        robot_xy=robot_xy,
-        robot_yaw=yaw,
-        num_rays=num_rays,
-        max_range=max_range,
-        step_size=step_size,
-        unknown_is_occupied=True,
+        robot_xy=robot_xy, robot_yaw=yaw, num_rays=num_rays, max_range=max_range, step_size=step_size, unknown_is_occupied=True,
     )
+
+def distance_to_final_goal(env) -> torch.Tensor:
+    if not hasattr(env, 'navrl_final_goal_xy'):
+        return torch.zeros(env.num_envs, 1, device=env.device)
+    
+    robot_xy = _robot_xy(env)
+    dist = torch.norm(env.navrl_final_goal_xy - robot_xy, dim=-1)
+    return dist.unsqueeze(-1)
+
+def nav2_path_progress_fraction(env) -> torch.Tensor:
+    if not hasattr(env, 'navrl_global_path_xy') or not hasattr(env, 'navrl_path_cum_s'):
+        return torch.zeros(env.num_envs, 1, device=env.device)
+    robot_xy = _robot_xy(env)
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+
+    dist = torch.norm(path - robot_xy[:, None, :], dim=-1)
+
+    ids = torch.arange(path.shape[1], device=env.device)[None, :]
+    valid_mask = ids < valid_count[:, None]
+    dist = torch.where(valid_mask, dist, torch.ones_like(dist) * 1e6)
+
+    nearest_idx = torch.argmin(dist, dim=-1)
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    current_s = env.navrl_path_cum_s[env_ids, nearest_idx]
+    total_s = env.navrl_path_cum_s[env_ids, valid_count - 1].clamp_min(1e-6)
+
+    return (current_s / total_s).unsqueeze(-1)
+
+def map_collision_observation(env) -> torch.Tensor:
+    return map_collision_flag(
+        env,
+        radius=0.22,
+        num_points=16,
+    ).float().unsqueeze(-1)
+

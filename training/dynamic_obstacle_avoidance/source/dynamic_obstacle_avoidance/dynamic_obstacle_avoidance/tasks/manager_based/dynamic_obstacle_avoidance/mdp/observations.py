@@ -5,7 +5,7 @@ import math
 import torch
 
 from isaaclab.managers import SceneEntityCfg
-
+from .nav2_map import Nav2OccupancyMap
 
 def _env_origins(env, env_ids: torch.Tensor | None = None):
     if env_ids is None:
@@ -43,61 +43,6 @@ def _wrap_to_pi(angle: torch.Tensor):
     return torch.atan2(torch.sin(angle), torch.cos(angle))
 
 
-def _ensure_attr(env, name: str, shape):
-    if not hasattr(env, name):
-        setattr(env, name, torch.zeros(shape, device=env.device))
-
-
-def lookahead_distance(env) -> torch.Tensor:
-    _ensure_attr(env, "navrl_lookahead_xy", (env.num_envs, 2))
-    robot_xy = _robot_xy(env)
-    return torch.norm(env.navrl_lookahead_xy - robot_xy, dim=-1, keepdim=True)
-
-
-def lookahead_angle(env) -> torch.Tensor:
-    _ensure_attr(env, "navrl_lookahead_xy", (env.num_envs, 2))
-    robot_xy = _robot_xy(env)
-    yaw = _robot_yaw(env)
-
-    vec = env.navrl_lookahead_xy - robot_xy
-    target_angle = torch.atan2(vec[:, 1], vec[:, 0])
-    angle = _wrap_to_pi(target_angle - yaw)
-
-    return angle.unsqueeze(-1)
-
-
-def path_heading_error(env) -> torch.Tensor:
-    _ensure_attr(env, "navrl_path_points", (env.num_envs, 32, 2))
-
-    robot_xy = _robot_xy(env)
-    yaw = _robot_yaw(env)
-    path = env.navrl_path_points
-
-    distances = torch.norm(path - robot_xy[:, None, :], dim=-1)
-    closest = torch.argmin(distances, dim=-1)
-
-    next_ids = torch.clamp(closest + 1, max=path.shape[1] - 1)
-
-    p0 = path[torch.arange(env.num_envs, device=env.device), closest]
-    p1 = path[torch.arange(env.num_envs, device=env.device), next_ids]
-
-    heading = torch.atan2(p1[:, 1] - p0[:, 1], p1[:, 0] - p0[:, 0])
-    error = _wrap_to_pi(heading - yaw)
-
-    return error.unsqueeze(-1)
-
-
-def cross_track_error(env) -> torch.Tensor:
-    _ensure_attr(env, "navrl_path_points", (env.num_envs, 32, 2))
-
-    robot_xy = _robot_xy(env)
-    path = env.navrl_path_points
-
-    distances = torch.norm(path - robot_xy[:, None, :], dim=-1)
-    error = torch.min(distances, dim=-1).values
-
-    return error.unsqueeze(-1)
-
 
 def base_lin_vel(env) -> torch.Tensor:
     robot = env.scene["robot"]
@@ -117,98 +62,187 @@ def base_ang_vel(env) -> torch.Tensor:
     return robot.data.root_ang_vel_w[:, 2:3]
 
 
-def obstacle_scan(
-    env,
-    static_asset_cfg: SceneEntityCfg,
-    dynamic_asset_cfg: SceneEntityCfg,
-    num_rays: int = 72,
-    max_range: float = 4.0,
-) -> torch.Tensor:
-    robot_xy = _robot_xy(env)
-    yaw = _robot_yaw(env)
-
-    angles = torch.linspace(-math.pi, math.pi, num_rays, device=env.device)
-    world_angles = yaw[:, None] + angles[None, :]
-
-    scan = torch.ones(env.num_envs, num_rays, device=env.device) * max_range
-
-    points = []
-
-    if hasattr(env, "navrl_static_xy"):
-        n = getattr(env, "navrl_active_static_count", env.navrl_static_xy.shape[1])
-        points.append(env.navrl_static_xy[:, :n, :])
-
-    if hasattr(env, "navrl_dynamic_xy"):
-        n = getattr(env, "navrl_active_dynamic_count", env.navrl_dynamic_xy.shape[1])
-        points.append(env.navrl_dynamic_xy[:, :n, :])
-
-    if len(points) == 0:
-        return scan
-
-    obstacle_xy = torch.cat(points, dim=1)
-
-    rel = obstacle_xy[:, :, :] - robot_xy[:, None, :]
-    dist = torch.norm(rel, dim=-1).clamp_min(1e-6)
-    angle = torch.atan2(rel[:, :, 1], rel[:, :, 0])
-
-    rel_angle = _wrap_to_pi(angle[:, :, None] - world_angles[:, None, :])
-
-    angular_width = math.pi / num_rays
-    mask = torch.abs(rel_angle) < angular_width
-
-    dist_expanded = dist[:, :, None].expand_as(mask)
-    dist_masked = torch.where(mask, dist_expanded, torch.ones_like(dist_expanded) * max_range)
-
-    scan = torch.min(dist_masked, dim=1).values
-    scan = torch.clamp(scan, 0.0, max_range)
-
-    return scan / max_range
-
-
-def nearest_dynamic_obstacle(
-    env,
-    asset_cfg: SceneEntityCfg,
-    max_range: float = 4.0,
-) -> torch.Tensor:
-    robot_xy = _robot_xy(env)
-    yaw = _robot_yaw(env)
-
-    if not hasattr(env, "navrl_dynamic_xy"):
-        return torch.zeros(env.num_envs, 3, device=env.device)
-
-    n = getattr(env, "navrl_active_dynamic_count", env.navrl_dynamic_xy.shape[1])
-    dyn_xy = env.navrl_dynamic_xy[:, :n, :]
-
-    rel = dyn_xy - robot_xy[:, None, :]
-    dist = torch.norm(rel, dim=-1)
-
-    nearest_id = torch.argmin(dist, dim=-1)
-    nearest_xy = dyn_xy[torch.arange(env.num_envs, device=env.device), nearest_id]
-    nearest_rel = nearest_xy - robot_xy
-
-    nearest_dist = torch.norm(nearest_rel, dim=-1)
-    nearest_angle = torch.atan2(nearest_rel[:, 1], nearest_rel[:, 0])
-    nearest_angle = _wrap_to_pi(nearest_angle - yaw)
-
-    if hasattr(env, "navrl_dynamic_vel_xy"):
-        dyn_vel = env.navrl_dynamic_vel_xy[:, :n, :]
-        nearest_vel = dyn_vel[torch.arange(env.num_envs, device=env.device), nearest_id]
-        nearest_speed = torch.norm(nearest_vel, dim=-1)
-    else:
-        nearest_speed = torch.zeros(env.num_envs, device=env.device)
-
-    return torch.stack(
-        [
-            torch.clamp(nearest_dist / max_range, 0.0, 1.0),
-            nearest_angle / math.pi,
-            nearest_speed / 1.5,
-        ],
-        dim=-1,
-    )
-
-
 def previous_action(env) -> torch.Tensor:
     if hasattr(env, "action_manager"):
         return env.action_manager.action
 
     return torch.zeros(env.num_envs, 3, device=env.device)
+
+
+def local_path_window(
+    env,
+    num_points: int = 8,
+    step: int = 8,
+) -> torch.Tensor:
+    """Return future Nav2 path points in robot frame.
+
+    Output shape:
+        [num_envs, num_points * 2]
+
+    This is the key observation for RL local-controller behavior.
+    """
+    if not hasattr(env, "navrl_global_path_xy"):
+        return torch.zeros(env.num_envs, num_points * 2, device=env.device)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+
+    # Ignore padded zeros after valid_count by setting distance large.
+    distances = torch.norm(path - robot_xy[:, None, :], dim=-1)
+
+    ids = torch.arange(path.shape[1], device=env.device)[None, :]
+    valid_mask = ids < valid_count[:, None]
+    distances = torch.where(valid_mask, distances, torch.ones_like(distances) * 1e6)
+
+    nearest_idx = torch.argmin(distances, dim=-1)
+
+    out = torch.zeros(env.num_envs, num_points, 2, device=env.device)
+
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    for k in range(num_points):
+        idx = nearest_idx + (k + 1) * step
+        idx = torch.minimum(idx, valid_count - 1)
+        idx = torch.clamp(idx, min=0)
+
+        p_world = path[env_ids, idx]
+        rel = p_world - robot_xy
+
+        cos_yaw = torch.cos(-yaw)
+        sin_yaw = torch.sin(-yaw)
+
+        x_b = cos_yaw * rel[:, 0] - sin_yaw * rel[:, 1]
+        y_b = sin_yaw * rel[:, 0] + cos_yaw * rel[:, 1]
+
+        out[:, k, 0] = x_b
+        out[:, k, 1] = y_b
+
+    return out.reshape(env.num_envs, num_points * 2)
+
+
+def nav2_path_heading_error(env) -> torch.Tensor:
+    if not hasattr(env, "navrl_global_path_xy"):
+        return torch.zeros(env.num_envs, 1, device=env.device)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+
+    distances = torch.norm(path - robot_xy[:, None, :], dim=-1)
+
+    ids = torch.arange(path.shape[1], device=env.device)[None, :]
+    valid_mask = ids < valid_count[:, None]
+    distances = torch.where(valid_mask, distances, torch.ones_like(distances) * 1e6)
+
+    nearest_idx = torch.argmin(distances, dim=-1)
+    next_idx = torch.minimum(nearest_idx + 3, valid_count - 1)
+    next_idx = torch.clamp(next_idx, min=0)
+
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    p0 = path[env_ids, nearest_idx]
+    p1 = path[env_ids, next_idx]
+
+    heading = torch.atan2(p1[:, 1] - p0[:, 1], p1[:, 0] - p0[:, 0])
+    error = _wrap_to_pi(heading - yaw)
+
+    return error.unsqueeze(-1)
+
+
+def nav2_cross_track_error(env) -> torch.Tensor:
+    if not hasattr(env, "navrl_global_path_xy"):
+        return torch.zeros(env.num_envs, 1, device=env.device)
+
+    robot_xy = _robot_xy(env)
+
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+
+    distances = torch.norm(path - robot_xy[:, None, :], dim=-1)
+
+    ids = torch.arange(path.shape[1], device=env.device)[None, :]
+    valid_mask = ids < valid_count[:, None]
+    distances = torch.where(valid_mask, distances, torch.ones_like(distances) * 1e6)
+
+    error = torch.min(distances, dim=-1).values
+
+    return error.unsqueeze(-1)
+
+
+
+def map_collision_flag(
+    env,
+    radius: float = 0.22,
+    num_points: int = 16,
+) -> torch.Tensor:
+    _ensure_nav2_map(env)
+
+    robot_xy = _robot_xy(env)
+
+    angles = torch.linspace(0.0, 2.0 * math.pi, num_points + 1, device=env.device)[:-1]
+    offsets = torch.stack(
+        [
+            torch.cos(angles) * radius,
+            torch.sin(angles) * radius,
+        ],
+        dim=-1,
+    )
+
+    footprint_points = robot_xy[:, None, :] + offsets[None, :, :]
+
+    occupied = env.nav2_occupancy_map.is_occupied_world(
+        footprint_points.reshape(-1, 2),
+        unknown_is_occupied=True,
+    ).reshape(env.num_envs, num_points)
+
+    center_occupied = env.nav2_occupancy_map.is_occupied_world(
+        robot_xy,
+        unknown_is_occupied=True,
+    )
+
+    return occupied.any(dim=-1) | center_occupied
+
+def _ensure_nav2_map(env):
+    if not hasattr(env, "nav2_occupancy_map"):
+        env.nav2_occupancy_map = Nav2OccupancyMap(
+            map_yaml_path=env.cfg.nav2_map_yaml_path,
+            device=env.device,
+            inflation_radius_m=0.12,
+        )
+
+
+def map_based_scan(
+    env,
+    num_rays: int = 72,
+    max_range: float = 4.0,
+    step_size: float = 0.05,
+) -> torch.Tensor:
+    """Map-only lidar scan.
+
+    This scan sees:
+      - Nav2 occupancy map
+
+    This scan does NOT see:
+      - other robots
+      - path markers
+      - goal markers
+      - visual map blocks
+    """
+    _ensure_nav2_map(env)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+
+    return env.nav2_occupancy_map.raycast_scan(
+        robot_xy=robot_xy,
+        robot_yaw=yaw,
+        num_rays=num_rays,
+        max_range=max_range,
+        step_size=step_size,
+        unknown_is_occupied=True,
+    )

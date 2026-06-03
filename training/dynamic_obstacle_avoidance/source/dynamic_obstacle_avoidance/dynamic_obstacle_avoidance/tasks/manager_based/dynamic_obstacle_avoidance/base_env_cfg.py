@@ -48,53 +48,6 @@ class DynamicObstacleAvoidanceSceneCfg(InteractiveSceneCfg):
     # robot will be injected from another config file
     robot: ArticulationCfg = MISSING
 
-    # Reusable wall blocks for on-the-fly procedural map generation
-    walls = RigidObjectCollectionCfg(
-        rigid_objects={
-            f'wall_{i:03d}': RigidObjectCfg(
-                prim_path=f'{{ENV_REGEX_NS}}/Wall_{i:03d}',
-                spawn=sim_utils.CuboidCfg(
-                    size=(0.5, 0.5, 0.5),
-                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=True,
-                        disable_gravity=True,
-
-                    ),
-                    collision_props=sim_utils.CollisionPropertiesCfg(),
-                    visual_material=sim_utils.PreviewSurfaceCfg(
-                        diffuse_color=(0.72, 0.76, 0.82),
-                        roughness=0.8,
-                    ),
-                ),
-                init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, -10)),
-            )
-            for i in range(96)
-        }
-    )
-
-    # static obstacles: boxes, furniture-like blocks, narrow-passge blockers
-    static_obstacles = RigidObjectCollectionCfg(
-        rigid_objects={
-            f'static_{i:02d}': RigidObjectCfg(
-                prim_path=f'{{ENV_REGEX_NS}}/StaticObstacle_{i:02d}',
-                spawn=sim_utils.CuboidCfg(
-                    size=(0.55, 0.55, 0.45),
-                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=True,
-                        disable_gravity=True,
-                    ),
-                    collision_props=sim_utils.CollisionPropertiesCfg(),
-                    visual_material=sim_utils.PreviewSurfaceCfg(
-                        diffuse_color=(0.35, 0.42, 0.52),
-                        roughness=0.8,
-                    ),
-                ),
-                init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, -10.0)),
-            )
-            for i in range(12)
-        }
-    )
-
     # Dynamic obstacles: moving cylinders / human proxies
 
     dynamic_obstacles = RigidObjectCollectionCfg(
@@ -147,29 +100,6 @@ class DynamicObstacleAvoidanceSceneCfg(InteractiveSceneCfg):
     )
 
 
-    # Lookahead marker: visual only, represents local Nav2-style target
-    lookahead_marker = RigidObjectCfg(
-        prim_path='{ENV_REGEX_NS}/LookaheadMarker',
-        spawn=sim_utils.SphereCfg(
-            radius=0.10,
-
-            # Kinematic visual marker.
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                kinematic_enabled=True,
-                disable_gravity=True,
-            ),
-
-            # IMPORTANT:
-            # Do not add collision_props here.
-            visual_material=sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.0, 0.45, 1.0),
-                roughness=0.5,
-            ),
-        ),
-        init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.10),
-        ),
-    )
 
     # lights
     dome_light = AssetBaseCfg(
@@ -193,21 +123,20 @@ class ActionsCfg:
 
     """
 
-    base_velocity = custom_actions.MecanumVelocityActionCfg(
-        class_type=custom_actions.MecanumVelocityAction,
-        asset_name = 'robot',
-        wheel_joint_names = [
-            'lwheel1_Joint', # front left
-            'lwheel2_Joint', # rear left
-            'rwheel1_Joint', # front right
-            'rwheel2_Joint', # rear right
+    base_velocity = custom_actions.KinematicMecanumActionCfg(
+        asset_name="robot",
+        wheel_joint_names=[
+            "lwheel1_Joint",
+            "lwheel2_Joint",
+            "rwheel1_Joint",
+            "rwheel2_Joint",
         ],
-        wheel_radius=0.04, # find correct radius
-        wheel_base_x=0.0795, # from urdf wheel x offset,
-        wheel_base_y=0.09775, # from urdf wheel y offset,
-        max_vx=0.6,
-        max_vy=0.6,
-        max_wz=1.8,
+        wheel_radius=0.04,
+        wheel_base_x=0.0795,
+        wheel_base_y=0.09775,
+        max_vx=0.5,
+        max_vy=0.5,
+        max_wz=1.0,
     )
 
 @configclass
@@ -219,40 +148,32 @@ class ObservationsCfg:
         """Observations for policy group.
         Observation should describe local navigation, not full global navigation.
         """
+        local_path_window = ObsTerm(
+            func=custom_observations.local_path_window,
+            params={
+                'num_points': 8,
+                'step': 8,
+            },
+        )
 
-        # Observation terms order preserved.
-
-        # Local path / lookahead target information
-        lookahead_distance = ObsTerm(func=custom_observations.lookahead_distance)
-        lookahead_angle = ObsTerm(func=custom_observations.lookahead_angle)
-        path_heading_error = ObsTerm(func=custom_observations.path_heading_error)
-        cross_track_error = ObsTerm(func=custom_observations.cross_track_error)
+        nav2_heading_error = ObsTerm(
+            func=custom_observations.nav2_path_heading_error,
+        )
+        nav2_cross_track_error = ObsTerm(
+            func=custom_observations.nav2_cross_track_error,
+        )
+        map_scan = ObsTerm(
+            func=custom_observations.map_based_scan,
+            params={
+                'num_rays': 72,
+                'max_range': 4.0,
+                'step_size': 0.05,
+            },
+        )
 
         # Robot motion
         base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
         base_angle_vel = ObsTerm(func=custom_observations.base_ang_vel)
-
-        # Local obstacle information
-        obstacle_scan = ObsTerm(
-            func=custom_observations.obstacle_scan,
-            params={
-                'static_asset_cfg': SceneEntityCfg('static_obstacles'),
-                'dynamic_asset_cfg': SceneEntityCfg('dynamic_obstacles'),
-                'num_rays': 72,
-                'max_range': 4.0,
-            },
-        )
-
-        # Nearest dynamic obstacle features
-
-        nearest_dynamic_obstacle = ObsTerm(
-            func=custom_observations.nearest_dynamic_obstacle,
-            params={
-                'asset_cfg': SceneEntityCfg('dynamic_obstacles'),
-                'max_range': 4.0,
-            },
-        )
-
         # Previous action for smoother policy behavior
         previous_action = ObsTerm(func=custom_observations.previous_action)
 
@@ -269,83 +190,28 @@ class EventCfg:
     """Configuration for events."""
 
     # reset
-    # generate map layout at reset
-    reset_runtime_map = EventTerm(
-        func=custom_events.reset_runtime_map,
-        mode='reset',
+    reset_nav2_path = EventTerm(
+        func=custom_events.reset_nav2_path_and_debug_validate,
+        mode="reset",
         params={
-            'wall_asset_cfg': SceneEntityCfg('walls'),
-            'static_asset_cfg': SceneEntityCfg('static_obstacles'),
-            'dynamic_asset_cfg': SceneEntityCfg('dynamic_obstacles'),
-            # 'goal_asset_cfg': SceneEntityCfg('goal_marker'),
-            'template_name': 'random',
-            'num_static_obstacles': 6,
-            'num_dynamic_obstacles': 4,
+            "asset_cfg": SceneEntityCfg("robot"),
+            "final_goal_marker_cfg": SceneEntityCfg("final_goal_marker"),
+            "max_path_points": 600,
         },
     )
 
-    # reset robot start pose
-    reset_robot_pose = EventTerm(
-        func=custom_events.reset_robot_pose,
-        mode='reset',
+    draw_nav2_debug = EventTerm(
+        func=custom_events.draw_nav2_map_path_scan_debug,
+        mode="interval",
+        interval_range_s=(0.20, 0.20),
         params={
-            'asset_cfg': SceneEntityCfg('robot'),
-            'x_range': (-4.5, -3.5),
-            'y_range': (-0.6, 0.6),
-            'yaw_range': (-0.15, 0.15),
-        },
-    )
-
-    
-    reset_path_command = EventTerm(
-        func=custom_events.reset_path_command,
-        mode='reset',
-        params={
-            'asset_cfg': SceneEntityCfg('robot'),
-
-            # visual markers only
-            'final_goal_marker_cfg': SceneEntityCfg('final_goal_marker'),
-            'lookahead_marker_cfg': SceneEntityCfg('lookahead_marker'),
-            'start_x_range': (-4.5, -3.5),
-            'start_y_range': (-0.6, 0.6),
-            'goal_x_range': (3.5, 4.5),
-            'goal_y_range': (-0.8, 0.8),
-            'lookahead_distance': 0.8,
-        },
-    )
-
-    # Reset dynamic obstacle speed and direction
-    reset_dynamic_obstacles = EventTerm(
-        func=custom_events.reset_dynamic_obstacles,
-        mode='reset',
-        params={
-            'asset_cfg': SceneEntityCfg('dynamic_obstacles'),
-            'min_speed': 0.35,
-            'max_speed': 1.20,
-            'num_active': 4,
-        },
-    )
-
-    # Move dynamic obstacles during episode
-    move_dynamic_obstacles = EventTerm(
-        func=custom_events.move_dynamic_obstacles,
-        mode='interval',
-        interval_range_s=(0.02, 0.02),
-        params={
-            'asset_cfg': SceneEntityCfg('dynamic_obstacles'),
-            'x_limit': 5.5,
-            'y_limit': 3.0,
-        },
-    )
-
-    update_lookahead_target = EventTerm(
-        func=custom_events.update_lookahead_target,
-        mode='interval',
-        interval_range_s=(0.05, 0.05),
-        params={
-            'asset_cfg': SceneEntityCfg('robot'),
-            'lookahead_marker_cfg': SceneEntityCfg('lookahead_marker'),
-            'lookahead_distance': 0.8,
+            "asset_cfg": SceneEntityCfg("robot"),
+            "map_stride": 1,
+            "max_map_points": 30000,
+            "path_stride": 4,
+            "num_rays": 72,
+            "max_range": 4.0,
+            "step_size": 0.05,
         },
     )
 
@@ -353,98 +219,8 @@ class EventCfg:
 @configclass
 class RewardsCfg:
     """Reward terms for RL local-controller and dynamic obstacle avoidance."""
-
-    # Follow local path / lookahead target
-    progress_along_path = RewTerm(
-        func=custom_rewards.progress_along_path,
-        weight=6.0,
-        params={'asset_cfg': SceneEntityCfg('robot')},
-    )
-
-    lookahead_tracking = RewTerm(
-        func=custom_rewards.lookahead_tracking_reward,
-        weight=3.0,
-        params={
-            'asset_cfg': SceneEntityCfg('robot'),
-            'distance_scale': 1.0,
-            'angle_scale': 1.0,
-        },
-    )
-
-    path_alignment = RewTerm(
-        func=custom_rewards.path_alignment_reward,
-        weight=2.0,
-        params={'asset_cfg': SceneEntityCfg('robot')},
-    )
-
-    cross_track_error = RewTerm(
-        func=custom_rewards.cross_track_error_penalty,
-        weight=-2.0,
-        params={"asset_cfg": SceneEntityCfg("robot")},
-    )
-
-    # Obstacle avoidance
-    obstacle_clearance = RewTerm(
-        func=custom_rewards.obstacle_clearance_reward,
-        weight=2.0,
-        params={
-            'static_asset_cfg': SceneEntityCfg('static_obstacles'),
-            'dynamic_asset_cfg': SceneEntityCfg('dynamic_obstacles'),
-            'safe_distance': 0.35,
-        },
-    )
-
-    collision = RewTerm(
-        func=custom_rewards.collision_penalty,
-        weight=-80.0,
-        params={
-            'robot_cfg': SceneEntityCfg('robot'),
-            'static_asset_cfg': SceneEntityCfg('static_obstacles'),
-            'dynamic_asset_cfg': SceneEntityCfg('dynamic_obstacles'),
-        },
-    )
-
-    # Dynamic obstacle behavior
-    dynamic_obstacle_clearance = RewTerm(
-        func=custom_rewards.dynamic_obstacle_clearance_reward,
-        weight=3.0,
-        params={
-            'dynamic_asset_cfg': SceneEntityCfg('dynamic_obstacles'),
-            'safe_distance': 0.45,
-        },
-    )
-
-    # Avoid freezing
-    unnecessary_stop = RewTerm(
-        func=custom_rewards.unnecessary_stop_penalty,
-        weight=-1.0,
-        params={
-            'asset_cfg': SceneEntityCfg('robot'),
-            'speed_threshold': 0.04,
-        },
-    )
-
-    # Smooth control
-    action_smoothness = RewTerm(
-        func=custom_rewards.action_smoothness_penalty,
-        weight=-0.05,
-    )
-
-    # Finish route / local path task
-    final_goal_reached = RewTerm(
-        func=custom_rewards.final_goal_reached_reward,
-        weight=50.0,
-        params={
-            'asset_cfg': SceneEntityCfg('robot'),
-            'threshold': 0.30,
-        },
-    )
-
-    # Time pressure
-    time_penalty = RewTerm(
-        func=custom_rewards.constant_penalty,
-        weight=-0.01,
-    )
+    pass
+    
 
 @configclass
 class TerminationsCfg:
@@ -460,25 +236,15 @@ class TerminationsCfg:
             'threshold': 0.30,
         },
     )
-    # Collision with static or dynamic obstacles
-    collision = DoneTerm(
-        func=custom_terminations.collision_termination,
+
+    map_collision = DoneTerm(
+        func=custom_terminations.map_collision_termination,
         params={
-            'robot_cfg': SceneEntityCfg('robot'),
-            'static_asset_cfg': SceneEntityCfg('static_obstacles'),
-            'dynamic_asset_cfg': SceneEntityCfg('dynamic_obstacles'),
+            "asset_cfg": SceneEntityCfg("robot"),
+            "radius": 0.22,
         },
     )
 
-    # Robot leaves training arena
-    out_of_bounds = DoneTerm(
-        func=custom_terminations.robot_out_of_bounds,
-        params={
-            'asset_cfg': SceneEntityCfg('robot'),
-            'x_bounds': (-6.0, 6.0),
-            'y_bounds': (-3.5, 3.5),
-        },
-    )
 
 ##
 # Environment configuration
@@ -496,7 +262,13 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
+    nav2_path_dataset_dir: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/nav_rl_bridge/rl_path_dataset/aws_warehouse"
+    nav2_map_yaml_path: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/m3_ros2/maps/no_roof_warehouse.yaml"
 
+    debug_draw_nav2: bool = True
+    debug_draw_lidar: bool = True
+    debug_draw_map: bool = True
+    debug_draw_path: bool = True
     # Post initialization
     def __post_init__(self) -> None:
         """Post initialization."""

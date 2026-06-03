@@ -66,6 +66,7 @@ class MecanumVelocityAction(ActionTerm):
         wz = actions[:, 2] * self.cfg.max_wz
 
         self._processed_actions[:, 0] = vx
+        # Test-only: intentionally disabling vy and wz
         self._processed_actions[:, 1] = 0.0 #vy
         self._processed_actions[:, 2] = 0.0 #wz
 

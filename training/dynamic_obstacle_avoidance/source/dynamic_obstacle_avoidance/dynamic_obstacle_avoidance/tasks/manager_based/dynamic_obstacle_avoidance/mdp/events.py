@@ -3,576 +3,432 @@ from __future__ import annotations
 import math
 
 import torch
-
+from .path_dataset import Nav2PathDataset
+from .nav2_map import Nav2OccupancyMap
 from isaaclab.managers import SceneEntityCfg
 
-CELL_SIZE = 0.6
-HIDDEN_Z = -10.0
-
-SCENARIOS = [
-    'narrow_corridor_crossing',
-    'doorway_human_crossing',
-    'blind_corner_intercept',
-    'static_dynamic',
-    'crossing_stream'
-]
-
-
-
-def _ensure_navrl_buffers(env):
+def _ensure_nav2_path_buffers(env, max_path_points: int = 600):
     device = env.device
+
+    if not hasattr(env, "nav2_path_dataset"):
+        env.nav2_path_dataset = Nav2PathDataset(
+            dataset_dir=env.cfg.nav2_path_dataset_dir,
+            device=device,
+            max_path_points=max_path_points,
+        )
+
+    if not hasattr(env, "navrl_global_path_xy"):
+        env.navrl_global_path_xy = torch.zeros(
+            env.num_envs, max_path_points, 2, device=device
+        )
+
+    if not hasattr(env, "navrl_path_valid_count"):
+        env.navrl_path_valid_count = torch.zeros(
+            env.num_envs, dtype=torch.long, device=device
+        )
 
     if not hasattr(env, "navrl_final_goal_xy"):
         env.navrl_final_goal_xy = torch.zeros(env.num_envs, 2, device=device)
 
-    if not hasattr(env, "navrl_path_points"):
-        env.navrl_path_points = torch.zeros(env.num_envs, 32, 2, device=device)
+    if not hasattr(env, "navrl_start_pose"):
+        env.navrl_start_pose = torch.zeros(env.num_envs, 3, device=device)
 
-    if not hasattr(env, "navrl_lookahead_xy"):
-        env.navrl_lookahead_xy = torch.zeros(env.num_envs, 2, device=device)
-
-    if not hasattr(env, "navrl_previous_goal_distance"):
-        env.navrl_previous_goal_distance = torch.zeros(env.num_envs, device=device)
-
-    if not hasattr(env, "navrl_previous_path_progress"):
-        env.navrl_previous_path_progress = torch.zeros(env.num_envs, device=device)
-
-    if not hasattr(env, "navrl_dynamic_xy"):
-        env.navrl_dynamic_xy = torch.zeros(env.num_envs, 8, 2, device=device)
-
-    if not hasattr(env, "navrl_dynamic_vel_xy"):
-        env.navrl_dynamic_vel_xy = torch.zeros(env.num_envs, 8, 2, device=device)
-
-    if not hasattr(env, "navrl_static_xy"):
-        env.navrl_static_xy = torch.zeros(env.num_envs, 12, 2, device=device)
-
-    if not hasattr(env, "navrl_wall_xy"):
-        env.navrl_wall_xy = torch.zeros(env.num_envs, 96, 2, device=device)
-
-    if not hasattr(env, "navrl_active_dynamic_count"):
-        env.navrl_active_dynamic_count = 0
-
-    if not hasattr(env, "navrl_active_static_count"):
-        env.navrl_active_static_count = 0
-
-    if not hasattr(env, "navrl_active_wall_count"):
-        env.navrl_active_wall_count = 0
+    if not hasattr(env, "navrl_goal_pose"):
+        env.navrl_goal_pose = torch.zeros(env.num_envs, 3, device=device)
 
 
-def _env_origins(env, env_ids: torch.Tensor) -> torch.Tensor:
-    if hasattr(env.scene, "env_origins"):
-        return env.scene.env_origins[env_ids, :2]
-    return torch.zeros(len(env_ids), 2, device=env.device)
+def reset_nav2_path_dataset(
+    env,
+    env_ids: torch.Tensor,
+    asset_cfg,
+    final_goal_marker_cfg=None,
+    max_path_points: int = 600,
+):
+    """Load one real Nav2 global path per reset and place robot at path start."""
 
+    _ensure_nav2_path_buffers(env, max_path_points=max_path_points)
 
-def _quat_from_yaw(yaw: torch.Tensor) -> torch.Tensor:
-    quat = torch.zeros(len(yaw), 4, device=yaw.device)
-    quat[:, 0] = torch.cos(0.5 * yaw)
-    quat[:, 3] = torch.sin(0.5 * yaw)
-    return quat
-
-
-
-def _write_collection_pose(collection, pose: torch.Tensor, env_ids: torch.Tensor):
-    if hasattr(collection, "write_object_pose_to_sim"):
-        collection.write_object_pose_to_sim(pose, env_ids=env_ids)
-    else:
-        state = torch.zeros(*pose.shape[:-1], 13, device=pose.device)
-        state[..., 0:7] = pose
-        collection.write_object_state_to_sim(state, env_ids=env_ids)
-
-
-def _write_marker_pose(marker, env, env_ids: torch.Tensor, xy: torch.Tensor, z: float):
-    origins = _env_origins(env, env_ids)
-
-    pose = torch.zeros(len(env_ids), 7, device=env.device)
-    pose[:, 0:2] = xy + origins
-    pose[:, 2] = z
-    pose[:, 3] = 1.0
-
-    marker.write_root_pose_to_sim(pose, env_ids=env_ids)
-
-
-def _robot_xy(env, asset_cfg: SceneEntityCfg, env_ids: torch.Tensor):
     robot = env.scene[asset_cfg.name]
-    return robot.data.root_pos_w[env_ids, :2] - _env_origins(env, env_ids)
 
+    starts, goals, paths, valid_counts, path_lengths = env.nav2_path_dataset.sample_batch(env_ids)
 
-def reset_runtime_map(
-    env,
-    env_ids: torch.Tensor,
-    wall_asset_cfg: SceneEntityCfg,
-    static_asset_cfg: SceneEntityCfg,
-    dynamic_asset_cfg: SceneEntityCfg,
-    template_name: str = "random",
-    num_static_obstacles: int = 5,
-    num_dynamic_obstacles: int = 3,
-):
-    _ensure_navrl_buffers(env)
+    env.navrl_start_pose[env_ids] = starts
+    env.navrl_goal_pose[env_ids] = goals
+    env.navrl_global_path_xy[env_ids] = paths
+    env.navrl_path_valid_count[env_ids] = valid_counts
+    env.navrl_final_goal_xy[env_ids] = goals[:, :2]
 
-    if template_name == "random":
-        scenario_id = torch.randint(0, len(SCENARIOS), (1,), device=env.device).item()
-        template_name = SCENARIOS[scenario_id]
+    root_state = robot.data.default_root_state[env_ids].clone()
 
-    wall_segments, static_obstacles, dynamic_lanes, start, goal = _get_scenario_layout(template_name)
+    root_state[:, 0] = starts[:, 0] + env.scene.env_origins[env_ids, 0]
+    root_state[:, 1] = starts[:, 1] + env.scene.env_origins[env_ids, 1]
+    root_state[:, 2] = 0.05
 
-    walls = env.scene[wall_asset_cfg.name]
-    static_obs = env.scene[static_asset_cfg.name]
-    dynamic_obs = env.scene[dynamic_asset_cfg.name]
+    yaw = starts[:, 2]
+    root_state[:, 3] = torch.cos(yaw * 0.5)   # qw
+    root_state[:, 4] = 0.0                    # qx
+    root_state[:, 5] = 0.0                    # qy
+    root_state[:, 6] = torch.sin(yaw * 0.5)   # qz
 
-    max_walls = walls.num_objects
-    max_static = static_obs.num_objects
-    max_dynamic = dynamic_obs.num_objects
+    root_state[:, 7:13] = 0.0
 
-    # ----------------------------
-    # Walls
-    # ----------------------------
-    wall_pose = torch.zeros(len(env_ids), max_walls, 7, device=env.device)
-    wall_pose[..., 2] = HIDDEN_Z
-    wall_pose[..., 3] = 1.0
+    robot.write_root_state_to_sim(root_state, env_ids=env_ids)
 
-    env.navrl_wall_xy[env_ids] = 999.0
-
-    active_wall_count = min(len(wall_segments), max_walls)
-
-    origins = _env_origins(env, env_ids)
-
-    for j in range(active_wall_count):
-        x, y, sx, sy = wall_segments[j]
-
-        wall_pose[:, j, 0] = x + origins[:, 0]
-        wall_pose[:, j, 1] = y + origins[:, 1]
-        wall_pose[:, j, 2] = 0.25
-        wall_pose[:, j, 3] = 1.0
-
-        env.navrl_wall_xy[env_ids, j, 0] = x
-        env.navrl_wall_xy[env_ids, j, 1] = y
-
-    _write_collection_pose(walls, wall_pose, env_ids)
-
-    env.navrl_active_wall_count = active_wall_count
-
-    # ----------------------------
-    # Static obstacles
-    # ----------------------------
-    static_pose = torch.zeros(len(env_ids), max_static, 7, device=env.device)
-    static_pose[..., 2] = HIDDEN_Z
-    static_pose[..., 3] = 1.0
-
-    env.navrl_static_xy[env_ids] = 999.0
-
-    active_static_count = min(num_static_obstacles, len(static_obstacles), max_static)
-
-    for j in range(active_static_count):
-        x, y, sx, sy = static_obstacles[j]
-
-        static_pose[:, j, 0] = x + origins[:, 0]
-        static_pose[:, j, 1] = y + origins[:, 1]
-        static_pose[:, j, 2] = 0.225
-        static_pose[:, j, 3] = 1.0
-
-        env.navrl_static_xy[env_ids, j, 0] = x
-        env.navrl_static_xy[env_ids, j, 1] = y
-
-    _write_collection_pose(static_obs, static_pose, env_ids)
-
-    env.navrl_active_static_count = active_static_count
-
-    # ----------------------------
-    # Dynamic obstacles
-    # ----------------------------
-    dynamic_pose = torch.zeros(len(env_ids), max_dynamic, 7, device=env.device)
-    dynamic_pose[..., 2] = HIDDEN_Z
-    dynamic_pose[..., 3] = 1.0
-
-    env.navrl_dynamic_xy[env_ids] = 999.0
-
-    active_dynamic_count = min(num_dynamic_obstacles, len(dynamic_lanes), max_dynamic)
-
-    if not hasattr(env, "navrl_dynamic_lane_start_xy"):
-        env.navrl_dynamic_lane_start_xy = torch.zeros(env.num_envs, max_dynamic, 2, device=env.device)
-    if not hasattr(env, "navrl_dynamic_lane_end_xy"):
-        env.navrl_dynamic_lane_end_xy = torch.zeros(env.num_envs, max_dynamic, 2, device=env.device)
-    if not hasattr(env, "navrl_dynamic_lane_direction"):
-        env.navrl_dynamic_lane_direction = torch.ones(env.num_envs, max_dynamic, device=env.device)
-
-    for j in range(active_dynamic_count):
-        x1, y1, x2, y2 = dynamic_lanes[j]
-
-        phase = torch.rand(len(env_ids), device=env.device)
-        x = x1 + phase * (x2 - x1)
-        y = y1 + phase * (y2 - y1)
-
-        dynamic_pose[:, j, 0] = x + origins[:, 0]
-        dynamic_pose[:, j, 1] = y + origins[:, 1]
-        dynamic_pose[:, j, 2] = 0.325
-        dynamic_pose[:, j, 3] = 1.0
-
-        env.navrl_dynamic_xy[env_ids, j, 0] = x
-        env.navrl_dynamic_xy[env_ids, j, 1] = y
-
-        env.navrl_dynamic_lane_start_xy[env_ids, j, 0] = x1
-        env.navrl_dynamic_lane_start_xy[env_ids, j, 1] = y1
-        env.navrl_dynamic_lane_end_xy[env_ids, j, 0] = x2
-        env.navrl_dynamic_lane_end_xy[env_ids, j, 1] = y2
-
-        direction = torch.where(torch.rand(len(env_ids), device=env.device) > 0.5, 1.0, -1.0)
-        env.navrl_dynamic_lane_direction[env_ids, j] = direction
-
-    _write_collection_pose(dynamic_obs, dynamic_pose, env_ids)
-
-    env.navrl_active_dynamic_count = active_dynamic_count
-
-    # Store scenario start/goal for reset_path_command
-    if not hasattr(env, "navrl_scenario_start_xy"):
-        env.navrl_scenario_start_xy = torch.zeros(env.num_envs, 2, device=env.device)
-    if not hasattr(env, "navrl_scenario_goal_xy"):
-        env.navrl_scenario_goal_xy = torch.zeros(env.num_envs, 2, device=env.device)
-
-    env.navrl_scenario_start_xy[env_ids, 0] = start[0]
-    env.navrl_scenario_start_xy[env_ids, 1] = start[1]
-    env.navrl_scenario_goal_xy[env_ids, 0] = goal[0]
-    env.navrl_scenario_goal_xy[env_ids, 1] = goal[1]
-
-
-def reset_robot_pose(
-    env,
-    env_ids: torch.Tensor,
-    asset_cfg: SceneEntityCfg,
-    x_range=(-4.5, -3.5),
-    y_range=(-0.6, 0.6),
-    yaw_range=(-0.15, 0.15),
-):
-    robot = env.scene[asset_cfg.name]
-    origins = _env_origins(env, env_ids)
-
-    x = torch.empty(len(env_ids), device=env.device).uniform_(*x_range)
-    y = torch.empty(len(env_ids), device=env.device).uniform_(*y_range)
-    yaw = torch.empty(len(env_ids), device=env.device).uniform_(*yaw_range)
-
-    pose = torch.zeros(len(env_ids), 7, device=env.device)
-    pose[:, 0:2] = torch.stack([x, y], dim=-1) + origins
-    pose[:, 2] = 0.05
-    pose[:, 3:7] = _quat_from_yaw(yaw)
-
-    velocity = torch.zeros(len(env_ids), 6, device=env.device)
-
-    robot.write_root_pose_to_sim(pose, env_ids=env_ids)
-    robot.write_root_velocity_to_sim(velocity, env_ids=env_ids)
-
-def reset_path_command(
-    env,
-    env_ids: torch.Tensor,
-    asset_cfg: SceneEntityCfg | None = None,
-    final_goal_marker_cfg: SceneEntityCfg | None = None,
-    lookahead_marker_cfg: SceneEntityCfg | None = None,
-    start_x_range=(-4.5, -3.5),
-    start_y_range=(-0.6, 0.6),
-    goal_x_range=(3.5, 4.5),
-    goal_y_range=(-0.8, 0.8),
-    lookahead_distance: float = 0.8,
-):
-    _ensure_navrl_buffers(env)
-
-    if hasattr(env, "navrl_scenario_start_xy") and hasattr(env, "navrl_scenario_goal_xy"):
-        start = env.navrl_scenario_start_xy[env_ids]
-        goal = env.navrl_scenario_goal_xy[env_ids]
-    else:
-        start_x = torch.empty(len(env_ids), device=env.device).uniform_(*start_x_range)
-        start_y = torch.empty(len(env_ids), device=env.device).uniform_(*start_y_range)
-        goal_x = torch.empty(len(env_ids), device=env.device).uniform_(*goal_x_range)
-        goal_y = torch.empty(len(env_ids), device=env.device).uniform_(*goal_y_range)
-
-        start = torch.stack([start_x, start_y], dim=-1)
-        goal = torch.stack([goal_x, goal_y], dim=-1)
-
-    env.navrl_final_goal_xy[env_ids] = goal
-
-    num_points = env.navrl_path_points.shape[1]
-    t = torch.linspace(0.0, 1.0, num_points, device=env.device).view(1, num_points, 1)
-
-    path = start[:, None, :] * (1.0 - t) + goal[:, None, :] * t
-    env.navrl_path_points[env_ids] = path
-
-    direction = goal - start
-    distance = torch.norm(direction, dim=-1, keepdim=True).clamp_min(1e-6)
-    lookahead = start + direction / distance * lookahead_distance
-    env.navrl_lookahead_xy[env_ids] = lookahead
-
-    env.navrl_previous_goal_distance[env_ids] = torch.norm(goal - start, dim=-1)
-    env.navrl_previous_path_progress[env_ids] = torch.zeros(len(env_ids), device=env.device)
-
+    # Optional: move visual final-goal marker.
     if final_goal_marker_cfg is not None:
-        final_marker = env.scene[final_goal_marker_cfg.name]
-        _write_marker_pose(final_marker, env, env_ids, goal, z=0.16)
+        marker = env.scene[final_goal_marker_cfg.name]
 
-    if lookahead_marker_cfg is not None:
-        lookahead_marker = env.scene[lookahead_marker_cfg.name]
-        _write_marker_pose(lookahead_marker, env, env_ids, lookahead, z=0.10)
+        pose = torch.zeros(len(env_ids), 7, device=env.device)
+        pose[:, 0] = goals[:, 0] + env.scene.env_origins[env_ids, 0]
+        pose[:, 1] = goals[:, 1] + env.scene.env_origins[env_ids, 1]
+        pose[:, 2] = 0.15
+        pose[:, 3] = 1.0
 
-def reset_dynamic_obstacles(
+        marker.write_root_pose_to_sim(pose, env_ids=env_ids)
+
+def _ensure_nav2_map(env):
+    if not hasattr(env, "nav2_occupancy_map"):
+        env.nav2_occupancy_map = Nav2OccupancyMap(
+            map_yaml_path=env.cfg.nav2_map_yaml_path,
+            device=env.device,
+        )
+
+
+
+
+
+def reset_nav2_path_and_debug_validate(
     env,
     env_ids: torch.Tensor,
     asset_cfg: SceneEntityCfg,
-    min_speed: float = 0.35,
-    max_speed: float = 1.20,
-    num_active: int = 4,
+    final_goal_marker_cfg: SceneEntityCfg | None = None,
+    max_path_points: int = 600,
 ):
-    _ensure_navrl_buffers(env)
+    """Load Nav2 path dataset, place robot, place goal marker, validate map/path alignment."""
+    reset_nav2_path_dataset(
+        env=env,
+        env_ids=env_ids,
+        asset_cfg=asset_cfg,
+        final_goal_marker_cfg=final_goal_marker_cfg,
+        max_path_points=max_path_points,
+    )
+    _ensure_training_reward_buffers(env, max_path_points=max_path_points)
 
-    angles = torch.rand(len(env_ids), num_active, device=env.device) * 2.0 * math.pi
-    speeds = torch.empty(len(env_ids), num_active, device=env.device).uniform_(min_speed, max_speed)
+    path = env.navrl_global_path_xy[env_ids]
+    diff = path[:, 1:, :] - path[:, :-1, :]
+    seg_len = torch.norm(diff, dim=-1)
 
-    env.navrl_dynamic_vel_xy[env_ids, :num_active, 0] = speeds * torch.cos(angles)
-    env.navrl_dynamic_vel_xy[env_ids, :num_active, 1] = speeds * torch.sin(angles)
-    env.navrl_active_dynamic_count = num_active
+    env.navrl_path_cum_s[env_ids, :] = 0.0
+    env.navrl_path_cum_s[env_ids, 1:] = torch.cumsum(seg_len, dim=-1)
 
-def move_dynamic_obstacles(
+    env.navrl_prev_progress_s[env_ids] = 0.0
+    env.navrl_prev_action_for_reward[env_ids] = 0.0
+
+    validate_nav2_path_against_map(
+        env=env,
+        env_ids=env_ids,
+        max_bad_fraction=0.02,
+    )
+
+
+
+def _get_debug_draw():
+    """Acquire Isaac Sim DebugDraw interface.
+
+    This is visual-only. It does not create PhysX bodies.
+    """
+    try:
+        from isaacsim.util.debug_draw import _debug_draw # type: ignore
+    except Exception:
+        from omni.isaac.debug_draw import _debug_draw  # type: ignore
+
+    return _debug_draw.acquire_debug_draw_interface()
+
+
+def _clear_debug_draw(draw):
+    for fn in ("clear", "clear_points", "clear_lines"):
+        if hasattr(draw, fn):
+            try:
+                getattr(draw, fn)()
+            except Exception:
+                pass
+
+
+def validate_nav2_path_against_map(
+    env,
+    env_ids: torch.Tensor,
+    max_bad_fraction: float = 0.02,
+):
+    """Print whether loaded Nav2 paths are free in the loaded Nav2 occupancy map."""
+    _ensure_nav2_map(env)
+
+    for env_id in env_ids:
+        valid_count = int(env.navrl_path_valid_count[env_id].item())
+
+        if valid_count <= 1:
+            print(
+                f"[NAV2 MAP CHECK] env={int(env_id)} invalid path count={valid_count}",
+                flush=True,
+            )
+            continue
+
+        path_xy = env.navrl_global_path_xy[env_id, :valid_count]
+
+        report = env.nav2_occupancy_map.path_occupancy_report(
+            path_xy,
+            unknown_is_occupied=True,
+        )
+
+        msg = (
+            f"[NAV2 MAP CHECK] env={int(env_id)} "
+            f"points={report['num_points']} "
+            f"occupied={report['num_occupied']} "
+            f"fraction={report['occupied_fraction']:.4f}"
+        )
+
+        if report["occupied_fraction"] > max_bad_fraction:
+            print("[NAV2 MAP CHECK][ERROR] " + msg, flush=True)
+            print(
+                f"[NAV2 MAP CHECK][ERROR] first bad points: {report['first_bad_points']}",
+                flush=True,
+            )
+        else:
+            print("[NAV2 MAP CHECK][OK] " + msg, flush=True)
+
+def draw_nav2_map_path_scan_debug(
     env,
     env_ids: torch.Tensor,
     asset_cfg: SceneEntityCfg,
-    x_limit: float = 5.5,
-    y_limit: float = 3.0,
+    map_stride: int = 1,
+    max_map_points: int = 30000,
+    path_stride: int = 4,
+    num_rays: int = 72,
+    max_range: float = 4.0,
+    step_size: float = 0.05,
 ):
-    _ensure_navrl_buffers(env)
+    """Draw map, path, and lidar scan using Isaac DebugDraw.
 
-    n = env.navrl_active_dynamic_count
-    if n <= 0:
-        return
-
-    dynamic_obs = env.scene[asset_cfg.name]
-    max_dynamic = dynamic_obs.num_objects
-    origins = _env_origins(env, env_ids)
-
-    dt = env.step_dt
-
-    xy = env.navrl_dynamic_xy[env_ids, :n]
-    start = env.navrl_dynamic_lane_start_xy[env_ids, :n]
-    end = env.navrl_dynamic_lane_end_xy[env_ids, :n]
-    direction_sign = env.navrl_dynamic_lane_direction[env_ids, :n]
-
-    lane_vec = end - start
-    lane_len = torch.norm(lane_vec, dim=-1).clamp_min(1e-6)
-    lane_dir = lane_vec / lane_len.unsqueeze(-1)
-
-    speed = 0.65
-
-    xy = xy + lane_dir * direction_sign.unsqueeze(-1) * speed * dt
-
-    from_start = xy - start
-    progress = torch.sum(from_start * lane_dir, dim=-1)
-
-    hit_start = progress < 0.0
-    hit_end = progress > lane_len
-    hit = hit_start | hit_end
-
-    direction_sign = torch.where(hit, -direction_sign, direction_sign)
-
-    # Correct tensor-safe clamp:
-    progress = torch.maximum(progress, torch.zeros_like(progress))
-    progress = torch.minimum(progress, lane_len)
-
-    xy = start + lane_dir * progress.unsqueeze(-1)
-
-    env.navrl_dynamic_xy[env_ids, :n] = xy
-    env.navrl_dynamic_lane_direction[env_ids, :n] = direction_sign
-
-    pose = torch.zeros(len(env_ids), max_dynamic, 7, device=env.device)
-    pose[..., 2] = HIDDEN_Z
-    pose[..., 3] = 1.0
-
-    pose[:, :n, 0:2] = xy + origins[:, None, :]
-    pose[:, :n, 2] = 0.325
-    pose[:, :n, 3] = 1.0
-
-    _write_collection_pose(dynamic_obs, pose, env_ids)
-def update_lookahead_target(
-    env,
-    env_ids: torch.Tensor,
-    asset_cfg: SceneEntityCfg,
-    lookahead_marker_cfg: SceneEntityCfg | None = None,
-    lookahead_distance: float = 0.8,
-):
-    _ensure_navrl_buffers(env)
-
-    robot_xy = _robot_xy(env, asset_cfg, env_ids)
-    path = env.navrl_path_points[env_ids]
-
-    distances = torch.norm(path - robot_xy[:, None, :], dim=-1)
-    closest_ids = torch.argmin(distances, dim=-1)
-
-    lookahead_ids = closest_ids.clone()
-
-    for i in range(len(env_ids)):
-        distance_sum = 0.0
-        j = int(closest_ids[i].item())
-
-        while j < path.shape[1] - 1 and distance_sum < lookahead_distance:
-            segment_length = torch.norm(path[i, j + 1] - path[i, j])
-            distance_sum += float(segment_length.item())
-            j += 1
-
-        lookahead_ids[i] = j
-
-    lookahead = path[torch.arange(len(env_ids), device=env.device), lookahead_ids]
-    env.navrl_lookahead_xy[env_ids] = lookahead
-
-    if lookahead_marker_cfg is not None:
-        marker = env.scene[lookahead_marker_cfg.name]
-        _write_marker_pose(marker, env, env_ids, lookahead, z=0.10)
-
-
-def _get_scenario_layout(name: str):
-    """Return wall segments, static obstacles, dynamic obstacle spawn lines, start, goal.
-
-    Coordinates are local to each environment.
-
-    wall_segments:
-        list of (x, y, sx, sy)
-
-    static_obstacles:
-        list of (x, y, sx, sy)
-
-    dynamic_lanes:
-        list of (x1, y1, x2, y2)
-        dynamic obstacles move along/cross these lanes.
-
-    start:
-        (x, y)
-
-    goal:
-        (x, y)
+    Debug only:
+    - no PhysX objects
+    - no collision
+    - no lidar interference
+    - other robots are still ignored by map_based_scan
     """
 
-    if name == "narrow_corridor_crossing":
-        # Long corridor where moving obstacles cross the robot path.
-        # Classical controllers often stop until the crossing object fully clears.
-        wall_segments = [
-            (0.0,  1.25, 10.0, 0.25),   # upper corridor wall
-            (0.0, -1.25, 10.0, 0.25),   # lower corridor wall
-            (-5.0, 0.0, 0.25, 2.75),    # left boundary
-            (5.0,  0.0, 0.25, 2.75),    # right boundary
-        ]
+    if not bool(getattr(env.cfg, "debug_draw_nav2", True)):
+        return
 
-        static_obstacles = [
-            (-1.4, 0.65, 0.45, 0.45),
-            (1.6, -0.65, 0.45, 0.45),
-        ]
+    draw_map = bool(getattr(env.cfg, "debug_draw_map", True))
+    draw_path = bool(getattr(env.cfg, "debug_draw_path", True))
+    draw_lidar = bool(getattr(env.cfg, "debug_draw_lidar", True))
 
-        dynamic_lanes = [
-            (-2.0, -1.0, -2.0, 1.0),
-            (0.0, 1.0, 0.0, -1.0),
-            (2.0, -1.0, 2.0, 1.0),
-        ]
+    _ensure_nav2_map(env)
 
-        start = (-4.3, 0.0)
-        goal = (4.3, 0.0)
+    draw = _get_debug_draw()
+    _clear_debug_draw(draw)
 
-    elif name == "doorway_human_crossing":
-        # Doorway bottleneck. Robot must time the doorway crossing.
-        # Classical controllers usually freeze at the doorway.
-        wall_segments = [
-            (-2.5, 1.5, 5.0, 0.25),
-            (-2.5, -1.5, 5.0, 0.25),
-            (2.5, 1.5, 5.0, 0.25),
-            (2.5, -1.5, 5.0, 0.25),
+    robot = env.scene[asset_cfg.name]
 
-            (0.0, 1.05, 0.25, 0.90),    # top doorway wall piece
-            (0.0, -1.05, 0.25, 0.90),   # bottom doorway wall piece
-        ]
+    # If env_ids is empty, draw all envs.
+    if env_ids is None or len(env_ids) == 0:
+        env_ids = torch.arange(env.num_envs, device=env.device)
 
-        static_obstacles = [
-            (-3.2, 0.7, 0.55, 0.55),
-            (3.2, -0.7, 0.55, 0.55),
-        ]
+    # DebugDraw can become heavy with many envs.
+    # For now, draw all envs passed by EventManager.
+    draw_env_ids = env_ids
 
-        dynamic_lanes = [
-            (0.0, -1.3, 0.0, 1.3),      # human crosses doorway
-            (-0.5, 1.2, 0.5, -1.2),
-        ]
+    # --------------------------------------------------
+    # Draw map/path only for first env to avoid clutter
+    # --------------------------------------------------
+    first_env_id = int(draw_env_ids[0].item())
+    # first_origin = env.scene.env_origins[first_env_id, :2]
 
-        start = (-4.2, 0.0)
-        goal = (4.2, 0.0)
+    # --------------------------------------------------
+    # Draw occupied map for ALL envs
+    # --------------------------------------------------
+    if draw_map:
+        occ_xy = env.nav2_occupancy_map.debug_occupied_world_points(
+            stride=map_stride,
+            max_points=max_map_points,
+        )
 
-    elif name == "blind_corner_intercept":
-        # L-shaped turn. Dynamic obstacle appears from blind side.
-        # Tests anticipation, not just reactive stopping.
-        wall_segments = [
-            (-2.5, 1.25, 5.0, 0.25),
-            (-2.5, -1.25, 5.0, 0.25),
-            (0.0, -1.25, 0.25, 3.0),
-            (1.5, 0.25, 3.0, 0.25),
-            (1.5, 2.25, 3.0, 0.25),
-            (3.0, 1.25, 0.25, 2.0),
-        ]
+        all_occ_points = []
 
-        static_obstacles = [
-            (-1.0, 0.65, 0.45, 0.45),
-            (1.4, 1.6, 0.45, 0.45),
-        ]
+        for eid_t in draw_env_ids:
+            eid = int(eid_t.item())
+            origin = env.scene.env_origins[eid, :2]
 
-        dynamic_lanes = [
-            (1.8, 2.0, 1.8, 0.4),       # obstacle comes from blind branch
-            (2.6, 0.5, 0.6, 0.5),
-        ]
+            occ_world = occ_xy + origin[None, :]
 
-        start = (-4.2, 0.0)
-        goal = (2.4, 1.5)
+            for p in occ_world:
+                all_occ_points.append(
+                    (
+                        float(p[0].item()),
+                        float(p[1].item()),
+                        0.25,
+                    )
+                )
 
-    elif name == "static_dynamic":
-        # Static clutter plus moving obstacles.
-        # Tests whether RL can keep moving instead of conservative stop-and-go.
-        wall_segments = [
-            (0.0,  2.0, 10.0, 0.25),
-            (0.0, -2.0, 10.0, 0.25),
-            (-5.0, 0.0, 0.25, 4.0),
-            (5.0,  0.0, 0.25, 4.0),
-        ]
+        if len(all_occ_points) > 0:
+            draw.draw_points(
+                all_occ_points,
+                [(0.02, 0.02, 0.02, 1.0)] * len(all_occ_points),
+                [6.0] * len(all_occ_points),
+            )
+    # ----------------------------
+    # Draw Nav2 global path for ALL envs
+    # ----------------------------
+    if draw_path:
+        all_p0 = []
+        all_p1 = []
 
-        static_obstacles = [
-            (-3.0, 0.7, 0.55, 0.55),
-            (-1.6, -0.7, 0.55, 0.55),
-            (-0.2, 0.7, 0.55, 0.55),
-            (1.2, -0.7, 0.55, 0.55),
-            (2.6, 0.7, 0.55, 0.55),
-        ]
+        for eid_t in draw_env_ids:
+            eid = int(eid_t.item())
+            origin = env.scene.env_origins[eid, :2]
 
-        dynamic_lanes = [
-            (-2.3, -1.6, -2.3, 1.6),
-            (0.5, 1.6, 0.5, -1.6),
-            (3.2, -1.6, 3.2, 1.6),
-        ]
+            valid_count = int(env.navrl_path_valid_count[eid].item())
+            if valid_count <= 1:
+                continue
 
-        start = (-4.4, 0.0)
-        goal = (4.4, 0.0)
+            path_xy = env.navrl_global_path_xy[eid, :valid_count:path_stride]
+            path_world = path_xy + origin[None, :]
 
-    elif name == "crossing_stream":
-        # Multiple moving obstacles crossing the path at different phases.
-        # This directly targets dynamic obstacle benchmarking.
-        wall_segments = [
-            (0.0,  1.8, 10.0, 0.25),
-            (0.0, -1.8, 10.0, 0.25),
-            (-5.0, 0.0, 0.25, 3.6),
-            (5.0,  0.0, 0.25, 3.6),
-        ]
+            for i in range(path_world.shape[0] - 1):
+                a = path_world[i]
+                b = path_world[i + 1]
 
-        static_obstacles = [
-            (-3.5, -0.9, 0.45, 0.45),
-            (3.5, 0.9, 0.45, 0.45),
-        ]
+                all_p0.append((float(a[0].item()), float(a[1].item()), 0.12))
+                all_p1.append((float(b[0].item()), float(b[1].item()), 0.12))
 
-        dynamic_lanes = [
-            (-3.0, -1.5, -3.0, 1.5),
-            (-1.5, 1.5, -1.5, -1.5),
-            (0.0, -1.5, 0.0, 1.5),
-            (1.5, 1.5, 1.5, -1.5),
-            (3.0, -1.5, 3.0, 1.5),
-        ]
+        if len(all_p0) > 0:
+            draw.draw_lines(
+                all_p0,
+                all_p1,
+                [(0.0, 0.3, 1.0, 1.0)] * len(all_p0),
+                [3.0] * len(all_p0),
+            )
 
-        start = (-4.4, 0.0)
-        goal = (4.4, 0.0)
+    # Goal points for all envs
+    if hasattr(env, "navrl_final_goal_xy"):
+        goal_points = []
 
-    else:
-        raise ValueError(f"Unknown scenario: {name}")
+        for eid_t in draw_env_ids:
+            eid = int(eid_t.item())
+            origin = env.scene.env_origins[eid, :2]
+            g = env.navrl_final_goal_xy[eid] + origin
 
-    return wall_segments, static_obstacles, dynamic_lanes, start, goal
+            goal_points.append((float(g[0].item()), float(g[1].item()), 0.35))
+
+        if len(goal_points) > 0:
+            draw.draw_points(
+                goal_points,
+                [(0.0, 1.0, 0.0, 1.0)] * len(goal_points),
+                [18.0] * len(goal_points),
+            )
+
+    if not draw_lidar:
+        return
+
+    # --------------------------------------------------
+    # Draw lidar scan for ALL envs
+    # --------------------------------------------------
+    all_start_lines = []
+    all_end_lines = []
+    all_hit_points = []
+
+    ray_angles = torch.linspace(-math.pi, math.pi, num_rays, device=env.device)
+
+    for eid_t in draw_env_ids:
+        eid = int(eid_t.item())
+
+        origin = env.scene.env_origins[eid, :2]
+
+        robot_xy_world = robot.data.root_pos_w[eid, :2]
+        robot_xy = robot_xy_world - origin
+
+        q = robot.data.root_quat_w[eid]
+        qw, qx, qy, qz = q[0], q[1], q[2], q[3]
+
+        yaw = torch.atan2(
+            2.0 * (qw * qz + qx * qy),
+            1.0 - 2.0 * (qy * qy + qz * qz),
+        )
+
+        scan_norm = env.nav2_occupancy_map.raycast_scan(
+            robot_xy=robot_xy.unsqueeze(0),
+            robot_yaw=yaw.unsqueeze(0),
+            num_rays=num_rays,
+            max_range=max_range,
+            step_size=step_size,
+            unknown_is_occupied=True,
+        )[0]
+
+        scan_m = scan_norm * max_range
+        world_angles = yaw + ray_angles
+
+        robot_draw_xy = robot_xy + origin
+
+        for i in range(num_rays):
+            hx = robot_xy[0] + torch.cos(world_angles[i]) * scan_m[i]
+            hy = robot_xy[1] + torch.sin(world_angles[i]) * scan_m[i]
+
+            hit_world = torch.stack([hx, hy]) + origin
+
+            all_start_lines.append(
+                (
+                    float(robot_draw_xy[0].item()),
+                    float(robot_draw_xy[1].item()),
+                    0.18,
+                )
+            )
+
+            all_end_lines.append(
+                (
+                    float(hit_world[0].item()),
+                    float(hit_world[1].item()),
+                    0.18,
+                )
+            )
+
+            all_hit_points.append(
+                (
+                    float(hit_world[0].item()),
+                    float(hit_world[1].item()),
+                    0.20,
+                )
+            )
+
+    if len(all_start_lines) > 0:
+        draw.draw_lines(
+            all_start_lines,
+            all_end_lines,
+            [(1.0, 0.0, 0.0, 0.65)] * len(all_start_lines),
+            [1.0] * len(all_start_lines),
+        )
+
+        draw.draw_points(
+            all_hit_points,
+            [(1.0, 0.0, 0.0, 1.0)] * len(all_hit_points),
+            [5.0] * len(all_hit_points),
+        )
+
+def _ensure_training_reward_buffers(env, max_path_points: int = 600):
+    if not hasattr(env, "navrl_path_cum_s"):
+        env.navrl_path_cum_s = torch.zeros(
+            env.num_envs,
+            max_path_points,
+            device=env.device,
+        )
+
+    if not hasattr(env, "navrl_prev_progress_s"):
+        env.navrl_prev_progress_s = torch.zeros(
+            env.num_envs,
+            device=env.device,
+        )
+
+    if not hasattr(env, "navrl_prev_action_for_reward"):
+        env.navrl_prev_action_for_reward = torch.zeros(
+            env.num_envs,
+            3,
+            device=env.device,
+        )

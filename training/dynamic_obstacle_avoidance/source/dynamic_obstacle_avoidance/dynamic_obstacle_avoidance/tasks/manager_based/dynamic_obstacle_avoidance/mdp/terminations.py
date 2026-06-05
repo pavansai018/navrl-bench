@@ -4,7 +4,7 @@ import torch
 
 from isaaclab.managers import SceneEntityCfg
 
-from .observations import _robot_xy, map_collision_flag
+from .observations import _robot_xy, map_collision_flag, dynamic_obstacle_collision_flag
 
 
 def final_goal_reached(env, asset_cfg: SceneEntityCfg, threshold: float = 0.30,) -> torch.Tensor:
@@ -19,3 +19,6 @@ def final_goal_reached(env, asset_cfg: SceneEntityCfg, threshold: float = 0.30,)
 
 def map_collision_termination(env, asset_cfg: SceneEntityCfg, radius: float = 0.22,) -> torch.Tensor:
     return map_collision_flag(env, radius=radius, num_points=16,)
+
+def dynamic_obstacle_collision_termination(env, asset_cfg: SceneEntityCfg, robot_radius: float = 0.22) -> torch.Tensor:
+    return dynamic_obstacle_collision_flag(env, robot_radius=robot_radius)

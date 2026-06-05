@@ -24,9 +24,9 @@ class MecanumVelocityActionCfg(ActionTermCfg):
     wheel_base_x: float = 0.0795
     wheel_base_y: float = 0.09775
 
-    max_vx: float = 0.6
-    max_vy: float = 0.6
-    max_wz: float = 1.8
+    max_vx: float = 0.75
+    max_vy: float = 0.75
+    max_wz: float = 2.0
 
 
 class MecanumVelocityAction(ActionTerm):
@@ -192,6 +192,8 @@ class KinematicMecanumAction(ActionTerm):
         self._processed_actions = torch.zeros(env.num_envs, 3, device=env.device)
         self._wheel_velocity_targets = torch.zeros(env.num_envs, 4, device=env.device)
 
+        self._env = env
+        self._action_delay_buffer = torch.zeros(env.num_envs, 4, 3, device=env.device)
         print("[KINEMATIC MECANUM ACTION] wheel joint names:", self._joint_names)
         print("[KINEMATIC MECANUM ACTION] wheel joint ids:", self._joint_ids)
 
@@ -210,12 +212,26 @@ class KinematicMecanumAction(ActionTerm):
     def process_actions(self, actions: torch.Tensor):
         self._raw_actions[:] = actions
 
+        if hasattr(self._env, "action_delay_steps"):
+            self._action_delay_buffer = torch.roll(self._action_delay_buffer, shifts=1, dims=1)
+            self._action_delay_buffer[:, 0, :] = actions
+
+            delay = self._env.action_delay_steps.clamp(0, self._action_delay_buffer.shape[1] - 1)
+            env_ids = torch.arange(actions.shape[0], device=actions.device)
+            actions = self._action_delay_buffer[env_ids, delay]
+
         actions = torch.clamp(actions, -1.0, 1.0)
 
         vx = actions[:, 0] * self.cfg.max_vx
         vy = actions[:, 1] * self.cfg.max_vy
         wz = actions[:, 2] * self.cfg.max_wz
 
+        if hasattr(self._env, "motor_strength_scale"):
+            scale = self._env.motor_strength_scale
+            vx = vx * scale
+            vy = vy * scale
+            wz = wz * scale
+            
         self._processed_actions[:, 0] = vx
         self._processed_actions[:, 1] = vy
         self._processed_actions[:, 2] = wz
@@ -280,10 +296,10 @@ class KinematicMecanumActionCfg(ActionTermCfg):
     asset_name: str = MISSING
     wheel_joint_names: list[str] = MISSING
 
-    wheel_radius: float = 0.04
+    wheel_radius: float = 0.035
     wheel_base_x: float = 0.0795
     wheel_base_y: float = 0.09775
 
-    max_vx: float = 0.5
-    max_vy: float = 0.5
-    max_wz: float = 1.0
+    max_vx: float = 0.75
+    max_vy: float = 0.75
+    max_wz: float = 2.0

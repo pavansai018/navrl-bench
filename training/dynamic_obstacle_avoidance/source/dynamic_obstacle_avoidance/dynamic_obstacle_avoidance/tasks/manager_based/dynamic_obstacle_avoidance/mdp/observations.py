@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 import torch
-
+import torch.nn.functional as F
 from isaaclab.managers import SceneEntityCfg
 from .nav2_map import Nav2OccupancyMap
 
@@ -103,6 +103,9 @@ def local_path_window(
 
     env_ids = torch.arange(env.num_envs, device=env.device)
 
+    cos_yaw = torch.cos(-yaw)
+    sin_yaw = torch.sin(-yaw)
+
     for k in range(num_points):
         idx = nearest_idx + (k + 1) * step
         idx = torch.minimum(idx, valid_count - 1)
@@ -111,17 +114,24 @@ def local_path_window(
         p_world = path[env_ids, idx]
         rel = p_world - robot_xy
 
-        cos_yaw = torch.cos(-yaw)
-        sin_yaw = torch.sin(-yaw)
-
         x_b = cos_yaw * rel[:, 0] - sin_yaw * rel[:, 1]
         y_b = sin_yaw * rel[:, 0] + cos_yaw * rel[:, 1]
 
         out[:, k, 0] = x_b
         out[:, k, 1] = y_b
 
-    return out.reshape(env.num_envs, num_points * 2)
+    # Keep scale stable. 4m lookahead should not dominate scan/velocity obs.
+    norm_scale = float(getattr(env.cfg, "path_window_normalization_m", 4.0))
+    return torch.clamp(out.reshape(env.num_envs, num_points * 2) / norm_scale, -2.0, 2.0)
 
+def _nearest_path_index(env, robot_xy: torch.Tensor) -> torch.Tensor:
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+    dist = torch.norm(path - robot_xy[:, None, :], dim=-1)
+    ids = torch.arange(path.shape[1], device=env.device)[None, :]
+    valid_mask = ids < valid_count[:, None]
+    dist = torch.where(valid_mask, dist, torch.ones_like(dist) * 1e6)
+    return torch.argmin(dist, dim=-1)
 
 def nav2_path_heading_error(env) -> torch.Tensor:
     if not hasattr(env, "navrl_global_path_xy"):
@@ -133,25 +143,13 @@ def nav2_path_heading_error(env) -> torch.Tensor:
     path = env.navrl_global_path_xy
     valid_count = env.navrl_path_valid_count
 
-    distances = torch.norm(path - robot_xy[:, None, :], dim=-1)
-
-    ids = torch.arange(path.shape[1], device=env.device)[None, :]
-    valid_mask = ids < valid_count[:, None]
-    distances = torch.where(valid_mask, distances, torch.ones_like(distances) * 1e6)
-
-    nearest_idx = torch.argmin(distances, dim=-1)
-    next_idx = torch.minimum(nearest_idx + 3, valid_count - 1)
-    next_idx = torch.clamp(next_idx, min=0)
-
+    nearest_idx = _nearest_path_index(env, robot_xy)
+    next_idx = torch.minimum(nearest_idx + 4, valid_count - 1)
     env_ids = torch.arange(env.num_envs, device=env.device)
-
     p0 = path[env_ids, nearest_idx]
     p1 = path[env_ids, next_idx]
-
     heading = torch.atan2(p1[:, 1] - p0[:, 1], p1[:, 0] - p0[:, 0])
-    error = _wrap_to_pi(heading - yaw)
-
-    return error.unsqueeze(-1)
+    return _wrap_to_pi(heading - yaw).unsqueeze(-1)
 
 
 def nav2_cross_track_error(env) -> torch.Tensor:
@@ -215,8 +213,16 @@ def _ensure_nav2_map(env):
             inflation_radius_m=0.12,
         )
 
+def _ensure_dynamic_buffers(env):
+    if not hasattr(env, "dyn_obs_xy"):
+        num_obs = int(getattr(env.cfg, "max_dynamic_obstacles", 6))
+        env.dyn_obs_xy = torch.zeros(env.num_envs, num_obs, 2, device=env.device)
+        env.dyn_obs_vel_xy = torch.zeros(env.num_envs, num_obs, 2, device=env.device)
+        env.dyn_obs_radius = torch.zeros(env.num_envs, num_obs, device=env.device)
+        env.dyn_obs_active = torch.zeros(env.num_envs, num_obs, dtype=torch.bool, device=env.device)
 
-def map_based_scan(env, num_rays: int = 72, max_range: float = 4.0, step_size: float = 0.05,) -> torch.Tensor:
+
+def map_based_scan(env, num_rays: int = 360, max_range: float = 4.0, step_size: float = 0.05,) -> torch.Tensor:
     """Map-only lidar scan.
 
     This scan sees:
@@ -249,21 +255,10 @@ def nav2_path_progress_fraction(env) -> torch.Tensor:
     if not hasattr(env, 'navrl_global_path_xy') or not hasattr(env, 'navrl_path_cum_s'):
         return torch.zeros(env.num_envs, 1, device=env.device)
     robot_xy = _robot_xy(env)
-    path = env.navrl_global_path_xy
-    valid_count = env.navrl_path_valid_count
-
-    dist = torch.norm(path - robot_xy[:, None, :], dim=-1)
-
-    ids = torch.arange(path.shape[1], device=env.device)[None, :]
-    valid_mask = ids < valid_count[:, None]
-    dist = torch.where(valid_mask, dist, torch.ones_like(dist) * 1e6)
-
-    nearest_idx = torch.argmin(dist, dim=-1)
+    nearest_idx = _nearest_path_index(env, robot_xy)
     env_ids = torch.arange(env.num_envs, device=env.device)
-
     current_s = env.navrl_path_cum_s[env_ids, nearest_idx]
-    total_s = env.navrl_path_cum_s[env_ids, valid_count - 1].clamp_min(1e-6)
-
+    total_s = env.navrl_path_cum_s[env_ids, env.navrl_path_valid_count - 1].clamp_min(1e-6)
     return (current_s / total_s).unsqueeze(-1)
 
 def map_collision_observation(env) -> torch.Tensor:
@@ -273,3 +268,147 @@ def map_collision_observation(env) -> torch.Tensor:
         num_points=16,
     ).float().unsqueeze(-1)
 
+
+def dynamic_obstacle_scan(env, num_rays: int = 360, max_range: float = 4.0) -> torch.Tensor:
+    """Analytic local lidar scan against tensor dynamic circular obstacles."""
+    _ensure_dynamic_buffers(env)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+    device = env.device
+
+    ray_angles = torch.linspace(-math.pi, math.pi, num_rays, device=device)
+    world_angles = yaw[:, None] + ray_angles[None, :]
+    ray_dir = torch.stack([torch.cos(world_angles), torch.sin(world_angles)], dim=-1)  # [E, R, 2]
+
+    obs_rel = env.dyn_obs_xy[:, None, :, :] - robot_xy[:, None, None, :]              # [E, 1, O, 2]
+    d = ray_dir[:, :, None, :]                                                       # [E, R, 1, 2]
+
+    proj = torch.sum(obs_rel * d, dim=-1)                                            # [E, R, O]
+    perp_vec = obs_rel - proj[..., None] * d
+    perp_dist = torch.norm(perp_vec, dim=-1)
+
+    radius = env.dyn_obs_radius[:, None, :]
+    active = env.dyn_obs_active[:, None, :]
+    valid = active & (proj > 0.0) & (proj < max_range) & (perp_dist <= radius)
+
+    chord = torch.sqrt(torch.clamp(radius * radius - perp_dist * perp_dist, min=0.0))
+    hit_dist = torch.clamp(proj - chord, min=0.0, max=max_range)
+    hit_dist = torch.where(valid, hit_dist, torch.ones_like(hit_dist) * max_range)
+
+    scan = torch.min(hit_dist, dim=-1).values
+    return torch.clamp(scan / max_range, 0.0, 1.0)
+
+
+def combined_static_dynamic_scan(env, num_rays: int = 360, max_range: float = 4.0, step_size: float = 0.05) -> torch.Tensor:
+    """Deployment-style local scan: nearest hit from static map or dynamic obstacles."""
+    max_rays = int(getattr(env.cfg, "lidar_max_rays", num_rays))
+    if hasattr(env, "dr_lidar_rays"):
+        current_rays = int(env.dr_lidar_rays.max().item())
+    else:
+        current_rays = max_rays
+    static_scan = map_based_scan(env, num_rays=num_rays, max_range=max_range, step_size=step_size)
+    dyn_scan = dynamic_obstacle_scan(env, num_rays=num_rays, max_range=max_range)
+    scan = torch.minimum(static_scan, dyn_scan)
+    if current_rays != max_rays:
+        scan = F.interpolate(
+            scan.unsqueeze(1),
+            size=max_rays,
+            mode="linear",
+            align_corners=False,
+        ).squeeze(1)
+
+    scan = _apply_scan_domain_randomization(env, scan)
+    return scan
+
+
+def dynamic_obstacle_states(env, num_obstacles: int = 4, max_range: float = 4.0) -> torch.Tensor:
+    """Nearest dynamic obstacles in robot frame: [x, y, vx, vy, radius, active] per obstacle.
+
+    This is local/predictive context, not global map context. It gives velocity information
+    that a single scan frame cannot provide.
+    """
+    _ensure_dynamic_buffers(env)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+    cos_yaw = torch.cos(-yaw)
+    sin_yaw = torch.sin(-yaw)
+
+    rel_w = env.dyn_obs_xy - robot_xy[:, None, :]
+    dist = torch.norm(rel_w, dim=-1)
+    dist_masked = torch.where(env.dyn_obs_active, dist, torch.ones_like(dist) * 1e6)
+    k = min(num_obstacles, env.dyn_obs_xy.shape[1])
+    ids = torch.topk(dist_masked, k=k, dim=-1, largest=False).indices
+
+    env_ids = torch.arange(env.num_envs, device=env.device)[:, None]
+    rel = rel_w[env_ids, ids]
+    vel_w = env.dyn_obs_vel_xy[env_ids, ids]
+    rad = env.dyn_obs_radius[env_ids, ids]
+    active = env.dyn_obs_active[env_ids, ids].float()
+
+    x_b = cos_yaw[:, None] * rel[..., 0] - sin_yaw[:, None] * rel[..., 1]
+    y_b = sin_yaw[:, None] * rel[..., 0] + cos_yaw[:, None] * rel[..., 1]
+    vx_b = cos_yaw[:, None] * vel_w[..., 0] - sin_yaw[:, None] * vel_w[..., 1]
+    vy_b = sin_yaw[:, None] * vel_w[..., 0] + cos_yaw[:, None] * vel_w[..., 1]
+
+    out = torch.stack([
+        torch.clamp(x_b / max_range, -1.5, 1.5),
+        torch.clamp(y_b / max_range, -1.5, 1.5),
+        torch.clamp(vx_b / 1.0, -1.5, 1.5),
+        torch.clamp(vy_b / 1.0, -1.5, 1.5),
+        torch.clamp(rad / 0.5, 0.0, 2.0),
+        active,
+    ], dim=-1)
+
+    if k < num_obstacles:
+        pad = torch.zeros(env.num_envs, num_obstacles - k, 6, device=env.device)
+        out = torch.cat([out, pad], dim=1)
+
+    return out.reshape(env.num_envs, num_obstacles * 6)
+
+
+def dynamic_path_blockage(env, lookahead_points: int = 32, path_radius: float = 0.35) -> torch.Tensor:
+    """Scalar: 1 if active obstacle overlaps the near-future path corridor."""
+    _ensure_dynamic_buffers(env)
+    if not hasattr(env, "navrl_global_path_xy"):
+        return torch.zeros(env.num_envs, 1, device=env.device)
+
+    robot_xy = _robot_xy(env)
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+    nearest_idx = _nearest_path_index(env, robot_xy)
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    blocked = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    for k in range(lookahead_points):
+        idx = torch.minimum(nearest_idx + k, valid_count - 1)
+        p = path[env_ids, idx]
+        d = torch.norm(env.dyn_obs_xy - p[:, None, :], dim=-1)
+        hit = env.dyn_obs_active & (d < (env.dyn_obs_radius + path_radius))
+        blocked = blocked | hit.any(dim=-1)
+    return blocked.float().unsqueeze(-1)
+
+def dynamic_obstacle_collision_flag(env, robot_radius: float = 0.22, safety_margin: float = 0.02) -> torch.Tensor:
+    _ensure_dynamic_buffers(env)
+    robot_xy = _robot_xy(env)
+    d = torch.norm(env.dyn_obs_xy - robot_xy[:, None, :], dim=-1)
+    collision = env.dyn_obs_active & (d < (env.dyn_obs_radius + robot_radius + safety_margin))
+    return collision.any(dim=-1)
+
+def dynamic_collision_observation(env) -> torch.Tensor:
+    return dynamic_obstacle_collision_flag(env).float().unsqueeze(-1)
+
+def _apply_scan_domain_randomization(env, scan: torch.Tensor) -> torch.Tensor:
+    if not bool(getattr(env.cfg, "dr_enable", True)):
+        return torch.clamp(scan, 0.0, 1.0)
+
+    if hasattr(env, "dr_scan_noise_std"):
+        noise = torch.randn_like(scan) * env.dr_scan_noise_std[:, None]
+        scan = scan + noise
+
+    if hasattr(env, "dr_scan_dropout_prob"):
+        dropout = torch.rand_like(scan) < env.dr_scan_dropout_prob[:, None]
+        scan = torch.where(dropout, torch.ones_like(scan), scan)
+
+    return torch.clamp(scan, 0.0, 1.0)

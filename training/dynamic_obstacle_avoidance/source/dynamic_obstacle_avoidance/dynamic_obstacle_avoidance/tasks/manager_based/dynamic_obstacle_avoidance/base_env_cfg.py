@@ -48,30 +48,6 @@ class DynamicObstacleAvoidanceSceneCfg(InteractiveSceneCfg):
     # robot will be injected from another config file
     robot: ArticulationCfg = MISSING
 
-    # Dynamic obstacles: moving cylinders / human proxies
-
-    dynamic_obstacles = RigidObjectCollectionCfg(
-        rigid_objects={
-            f'dynamic_{i:02d}': RigidObjectCfg(
-                prim_path=f'{{ENV_REGEX_NS}}/DynamicObstacle_{i:02d}',
-                spawn=sim_utils.CylinderCfg(
-                    radius=0.25,
-                    height=0.65,
-                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                        kinematic_enabled=True,
-                        disable_gravity=True,
-                    ),
-                    collision_props=sim_utils.CollisionPropertiesCfg(),
-                    visual_material=sim_utils.PreviewSurfaceCfg(
-                        diffuse_color=(0.95, 0.58, 0.10),
-                        roughness=0.7,
-                    ),
-                ),
-                init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, -10.0)),
-            )
-            for i in range(8)
-        }
-    )
 
     # Final goal marker: visual only, not an obstacle
     final_goal_marker = RigidObjectCfg(
@@ -131,12 +107,12 @@ class ActionsCfg:
             "rwheel1_Joint",
             "rwheel2_Joint",
         ],
-        wheel_radius=0.04,
+        wheel_radius=0.035,
         wheel_base_x=0.0795,
         wheel_base_y=0.09775,
-        max_vx=0.5,
-        max_vy=0.5,
-        max_wz=1.0,
+        max_vx=0.75,
+        max_vy=0.75,
+        max_wz=2.0,
     )
 
 @configclass
@@ -162,13 +138,19 @@ class ObservationsCfg:
         nav2_cross_track_error = ObsTerm(
             func=custom_observations.nav2_cross_track_error,
         )
-        map_scan = ObsTerm(
-            func=custom_observations.map_based_scan,
-            params={
-                'num_rays': 72,
-                'max_range': 4.0,
-                'step_size': 0.05,
-            },
+        combined_scan = ObsTerm(
+            func=custom_observations.combined_static_dynamic_scan,
+            params={"num_rays": 144, "max_range": 4.0, "step_size": 0.10},
+        )
+
+        dynamic_obstacles = ObsTerm(
+            func=custom_observations.dynamic_obstacle_states,
+            params={"num_obstacles": 4, "max_range": 4.0},
+        )
+
+        path_blocked = ObsTerm(
+            func=custom_observations.dynamic_path_blockage,
+            params={"lookahead_points": 32, "path_radius": 0.35},
         )
 
         # Robot motion
@@ -198,13 +180,17 @@ class ObservationsCfg:
             func=custom_observations.nav2_cross_track_error,
         )
 
-        map_scan = ObsTerm(
-            func=custom_observations.map_based_scan,
-            params={
-                'num_rays': 72,
-                'max_range': 4.0,
-                'step_size': 0.05,
-            },
+        combined_scan = ObsTerm(
+            func=custom_observations.combined_static_dynamic_scan,
+            params={"num_rays": 144, "max_range": 4.0, "step_size": 0.10},
+        )
+        dynamic_obstacles = ObsTerm(
+            func=custom_observations.dynamic_obstacle_states,
+            params={"num_obstacles": 4, "max_range": 4.0},
+        )
+        path_blocked = ObsTerm(
+            func=custom_observations.dynamic_path_blockage,
+            params={"lookahead_points": 32, "path_radius": 0.35},
         )
 
         base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
@@ -214,6 +200,7 @@ class ObservationsCfg:
         distance_to_goal = ObsTerm(func=custom_observations.distance_to_final_goal)
         progress_fraction = ObsTerm(func=custom_observations.nav2_path_progress_fraction)
         map_collision = ObsTerm(func=custom_observations.map_collision_observation)
+        dynamic_collision = ObsTerm(func=custom_observations.dynamic_collision_observation)
 
         def __post_init__(self) -> None:
             self.enable_corruption = False
@@ -239,6 +226,21 @@ class EventCfg:
         },
     )
 
+    reset_dynamic_obstacles = EventTerm(
+        func=custom_events.reset_dynamic_obstacles_tensor,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "max_path_points": 600,
+        },
+    )
+
+    update_dynamic_obstacles = EventTerm(
+        func=custom_events.update_dynamic_obstacles_tensor,
+        mode="interval",
+        interval_range_s=(0.03, 0.03),
+    )
+
     draw_nav2_debug = EventTerm(
         func=custom_events.draw_nav2_map_path_scan_debug,
         mode="interval",
@@ -254,64 +256,97 @@ class EventCfg:
         },
     )
 
+    print_training_metrics = EventTerm(
+        func=custom_events.print_curriculum_training_metrics,
+        mode="interval",
+        interval_range_s=(10.0, 12.0),
+    )
+
+    print_dr_metrics = EventTerm(
+        func=custom_events.print_domain_randomization_metrics,
+        mode="interval",
+        interval_range_s=(10.0, 12.0),
+    )
+
 
 @configclass
 class RewardsCfg:
     """
-    Reward terms for RL local-controller and dynamic obstacle avoidance.
+    Task rewards for adaptive dynamic obstacle avoidance.
 
-    progress:
-        positive when robot advances along Nav2 path
-
-    cross_track:
-        negative when robot drifts away from path
-
-    heading_alignment:
-        small positive when robot faces local path direction
-
-    map_collision:
-        large penalty when robot enters occupied map cells
-
-    final_goal:
-        large reward when goal reached
-
-    action_smoothness:
-        discourages jerky [vx, vy, wz]
-
-    time:
-        discourages wasting time
+    No raw vy reward. Mecanum usage is expected to emerge from scenarios where
+    lateral/diagonal motion maintains progress while avoiding dynamic obstacles.
     """
-
     progress = RewTerm(
         func=custom_rewards.progress_along_nav2_path,
-        weight=25.0,
+        weight=35.0,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
             'max_step_progress': 0.05,
         },
     )
+    goal_approach = RewTerm(
+        func=custom_rewards.goal_approach_reward,
+        weight=15.0,
+        params={"asset_cfg": SceneEntityCfg("robot"), "max_step_progress": 0.08},
+    )
 
     cross_track = RewTerm(
         func=custom_rewards.nav2_cross_track_penalty,
-        weight=-2.0,
+        weight=-1.5,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
             'max_error': 1.0,
         },
     )
 
+    path_rejoin = RewTerm(
+        func=custom_rewards.path_rejoin_reward,
+        weight=5.0,
+        params={"asset_cfg": SceneEntityCfg("robot"), "active_threshold": 0.20},
+    )
+
+
     heading_alignment = RewTerm(
         func=custom_rewards.nav2_heading_alignment_reward,
-        weight=0.5,
+        weight=0.15,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
             'lookahead_index_offset': 4,
         },
     )
 
+    dynamic_collision = RewTerm(
+        func=custom_rewards.dynamic_obstacle_collision_penalty,
+        weight=-100.0,
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22},
+    )
+
+    dynamic_clearance = RewTerm(
+        func=custom_rewards.dynamic_obstacle_clearance_penalty,
+        weight=-5.0,
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22, "clearance": 0.25},
+    )
+
+    dynamic_ttc = RewTerm(
+        func=custom_rewards.dynamic_time_to_collision_penalty,
+        weight=-1.0,
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22, "horizon_s": 1.0},
+    )
+
+    lateral_oscillation = RewTerm(
+        func=custom_rewards.nav2_heading_alignment_reward,
+        weight=0.20,
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'lookahead_index_offset': 4,
+        },
+    )
+
+
     map_collision = RewTerm(
         func=custom_rewards.map_collision_penalty,
-        weight=-25.0,
+        weight=-100.0,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
             'radius': 0.22,
@@ -320,7 +355,7 @@ class RewardsCfg:
 
     final_goal = RewTerm(
         func=custom_rewards.final_goal_reward,
-        weight=40.0,
+        weight=60.0,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
             'threshold': 0.30,
@@ -329,7 +364,12 @@ class RewardsCfg:
 
     action_smoothness = RewTerm(
         func=custom_rewards.action_smoothness_penalty,
-        weight=-0.05,
+        weight=-0.06,
+    )
+
+    yaw_rate = RewTerm(
+        func=custom_rewards.yaw_rate_penalty,
+        weight=-0.02,
     )
 
     time = RewTerm(
@@ -337,8 +377,12 @@ class RewardsCfg:
         weight=-0.01,
     )
 
+    no_wait = RewTerm(
+        func=custom_rewards.no_wait_penalty,
+        weight=-5.0,
+        params={"asset_cfg": SceneEntityCfg("robot"), "speed_threshold": 0.10},
+    )
 
-    
 
 @configclass
 class TerminationsCfg:
@@ -363,6 +407,10 @@ class TerminationsCfg:
         },
     )
 
+    dynamic_collision = DoneTerm(
+        func=custom_terminations.dynamic_obstacle_collision_termination,
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22},
+    )
 
 ##
 # Environment configuration
@@ -383,10 +431,85 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     nav2_path_dataset_dir: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/nav_rl_bridge/rl_path_dataset/aws_warehouse"
     nav2_map_yaml_path: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/m3_ros2/maps/no_roof_warehouse.yaml"
 
+    # Tensor dynamic obstacle/curriculum configuration.
+    max_dynamic_obstacles: int = 6
+    curriculum_resets_per_level: int = 200
+    curriculum_max_level: int = 5
+    fixed_curriculum_level: int = -1
+    dynamic_obstacle_radius_min: float = 0.18
+    dynamic_obstacle_radius_max: float = 0.32
+    dynamic_obstacle_deactivate_range: float = 6.0
+
+    # Small robustness noise only; dynamic obstacles create the actual avoidance problem.
+    reset_lateral_noise_m: float = 0.10
+    reset_yaw_noise_rad: float = 0.10
+    path_window_normalization_m: float = 4.0
+
+    # Debug controls.
+    debug_validate_nav2_path: bool = False
     debug_draw_nav2: bool = False
     debug_draw_lidar: bool = False
     debug_draw_map: bool = False
     debug_draw_path: bool = False
+    debug_draw_dynamic_obstacles: bool = False
+    debug_draw_max_envs: int = 4
+
+    # -----------------------------
+    # Domain Randomization V1
+    # -----------------------------
+    dr_enable: bool = True
+
+    # LiDAR curriculum: output observation always stays fixed at 360 rays
+    lidar_max_rays: int = 144
+    lidar_level_0_rays: int = 72
+    lidar_level_1_rays: int = 72
+    lidar_level_2_rays: int = 144
+    lidar_level_3_rays: int = 144
+
+    scan_noise_level_0: float = 0.0
+    scan_noise_level_1: float = 0.005
+    scan_noise_level_2: float = 0.01
+    scan_noise_level_3: float = 0.02
+
+    scan_dropout_level_0: float = 0.0
+    scan_dropout_level_1: float = 0.01
+    scan_dropout_level_2: float = 0.02
+    scan_dropout_level_3: float = 0.03
+
+    # Battery / motor strength randomization
+    battery_scale_level_0_min: float = 1.00
+    battery_scale_level_0_max: float = 1.00
+    battery_scale_level_1_min: float = 0.95
+    battery_scale_level_1_max: float = 1.00
+    battery_scale_level_2_min: float = 0.90
+    battery_scale_level_2_max: float = 1.00
+    battery_scale_level_3_min: float = 0.80
+    battery_scale_level_3_max: float = 1.00
+
+    # Action delay randomization
+    action_delay_level_0: int = 0
+    action_delay_level_1: int = 1
+    action_delay_level_2: int = 2
+    action_delay_level_3: int = 3
+    # Physics domain randomization
+    mass_level_0_min: float = 1.0
+    mass_level_0_max: float = 1.0
+    mass_level_1_min: float = 0.95
+    mass_level_1_max: float = 1.05
+    mass_level_2_min: float = 0.90
+    mass_level_2_max: float = 1.10
+    mass_level_3_min: float = 0.85
+    mass_level_3_max: float = 1.15
+
+    com_level_0_xy_m: float = 0.0
+    com_level_1_xy_m: float = 0.005
+    com_level_2_xy_m: float = 0.010
+    com_level_3_xy_m: float = 0.020
+    com_z_m: float = 0.005
+
+    # DR logging
+    dr_log_every_steps: int = 5000
+    curriculum_log_every_steps: int = 5000
     # Post initialization
     def __post_init__(self) -> None:
         """Post initialization."""

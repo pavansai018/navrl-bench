@@ -187,7 +187,7 @@ class Nav2OccupancyMap:
         device = robot_xy.device
         num_envs = robot_xy.shape[0]
 
-        ray_angles = torch.linspace(-math.pi, math.pi, num_rays, device=device)
+        ray_angles = torch.linspace(-math.pi, math.pi, num_rays + 1, device=device,)[:-1]
         world_angles = robot_yaw[:, None] + ray_angles[None, :]
 
         distances = torch.arange(

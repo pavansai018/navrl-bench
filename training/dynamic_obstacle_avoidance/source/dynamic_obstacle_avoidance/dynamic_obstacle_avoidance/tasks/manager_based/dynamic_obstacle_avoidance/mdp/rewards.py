@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import torch
-
+import math
 from isaaclab.managers import SceneEntityCfg
 
 from .observations import _robot_xy, _robot_yaw, _wrap_to_pi, map_collision_flag, dynamic_obstacle_collision_flag
@@ -47,8 +47,8 @@ def progress_along_nav2_path(env, asset_cfg: SceneEntityCfg, max_step_progress: 
 
     delta_s = current_s - env.navrl_prev_progress_s
     env.navrl_prev_progress_s[:] = current_s
-
-    return torch.clamp(delta_s, -max_step_progress, max_step_progress)
+    _, _, path_alpha, _ = _goal_blend(env, asset_cfg, start=1.5, end=0.30)
+    return path_alpha * torch.clamp(delta_s, -max_step_progress, max_step_progress)
 
 def nav2_cross_track_penalty(env, asset_cfg: SceneEntityCfg, max_error: float = 1.0,) -> torch.Tensor:
     """Penalty for distance away from nearest Nav2 path point."""
@@ -67,7 +67,10 @@ def nav2_cross_track_penalty(env, asset_cfg: SceneEntityCfg, max_error: float = 
     return torch.clamp(min_dist, 0.0, max_error)
 
 def nav2_heading_alignment_reward(env, asset_cfg: SceneEntityCfg, lookahead_index_offset: int = 4,) -> torch.Tensor:
-    """Reward robot yaw alignment with local Nav2 path tangent."""
+    """
+    Reward robot yaw alignment with local Nav2 path tangent.
+    When path is blocked, allow mecanum/lateral bypass without forcing diff drive style heading behavior
+    """
     robot_xy = _robot_xy(env, asset_cfg.name)
     robot_yaw = _robot_yaw(env, asset_cfg.name)
 
@@ -87,8 +90,13 @@ def nav2_heading_alignment_reward(env, asset_cfg: SceneEntityCfg, lookahead_inde
     # path_yaw = torch.atan2(p1[:, 1] - p0[:, 1], p1[:, 0] - p0[:, 0])
     path_yaw = torch.atan2(tangent[:, 1], tangent[:, 0])
     err = _wrap_to_pi(path_yaw - robot_yaw)
+    heading_reward = torch.cos(err)
+    _, _, path_alpha, _ = _goal_blend(env, asset_cfg, start=1.5, end=0.30)
+    if hasattr(env, "navrl_path_blocked"):
+        path_clear = 1.0 - env.navrl_path_blocked.float()
+        return heading_reward * path_clear * path_alpha
 
-    return torch.cos(err)
+    return heading_reward * path_alpha
 
 def goal_approach_reward(env, asset_cfg: SceneEntityCfg, max_step_progress: float = 0.08) -> torch.Tensor:
     """Dense goal-distance improvement. Helps when robot temporarily leaves path to bypass obstacle."""
@@ -169,12 +177,15 @@ def dynamic_time_to_collision_penalty(
     penalty = torch.where(risky, (horizon_s - t_ca) / horizon_s, torch.zeros_like(t_ca))
     return torch.max(penalty, dim=-1).values
 
+def _processed_base_action(env) -> torch.Tensor:
+    action_term = env.action_manager._terms["base_velocity"]
+    return action_term.processed_actions
 
 def action_smoothness_penalty(env) -> torch.Tensor:
     if not hasattr(env, "action_manager"):
         return torch.zeros(env.num_envs, device=env.device)
 
-    current_action = env.action_manager.action
+    current_action = _processed_base_action(env)
 
     if not hasattr(env, "navrl_prev_action_for_reward"):
         env.navrl_prev_action_for_reward = current_action.clone()
@@ -182,13 +193,14 @@ def action_smoothness_penalty(env) -> torch.Tensor:
     diff = torch.norm(current_action - env.navrl_prev_action_for_reward, dim=-1)
     env.navrl_prev_action_for_reward[:] = current_action
 
-    return diff
+    return torch.clamp(diff, 0.0, 2.0)
 
 def yaw_rate_penalty(env) -> torch.Tensor:
     """Small penalty only to avoid spinning as an avoidance exploit."""
     if not hasattr(env, "action_manager"):
         return torch.zeros(env.num_envs, device=env.device)
-    return torch.abs(env.action_manager.action[:, 2])
+    action = _processed_base_action(env)
+    return torch.clamp(torch.abs(action[:, 2]), 0.0, 2.0)
 
 def path_rejoin_reward(env, asset_cfg: SceneEntityCfg, active_threshold: float = 0.20) -> torch.Tensor:
     """Reward reducing cross-track error only after significant deviation.
@@ -207,7 +219,7 @@ def mecanum_usage_metric(env) -> torch.Tensor:
     """Metric only. Do not add this as a reward."""
     if not hasattr(env, "action_manager"):
         return torch.zeros(env.num_envs, device=env.device)
-    a = env.action_manager.action
+    a = _processed_base_action(env)
     return torch.abs(a[:, 1]) / (torch.abs(a[:, 0]) + torch.abs(a[:, 1]) + 1e-6)
 
 def time_penalty(env) -> torch.Tensor:
@@ -223,3 +235,97 @@ def no_wait_penalty(env, asset_cfg: SceneEntityCfg, speed_threshold: float = 0.1
     stopped = (speed < speed_threshold).float()
 
     return stopped * not_goal
+
+
+def path_velocity_reward(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    robot = env.scene[asset_cfg.name]
+    robot_xy, goal_dir, path_mode, goal_mode = _goal_blend(env, asset_cfg, start=1.5, end=0.3)
+
+
+    vel_w = robot.data.root_lin_vel_w[:, :2]
+
+    _, _, tangent, _ = _path_tangent_normal(env, robot_xy, lookahead=4)
+
+    v_path = torch.sum(vel_w * tangent, dim=-1)
+    v_goal = torch.sum(vel_w * goal_dir, dim=-1)
+
+    v = path_mode * v_path + goal_mode * v_goal
+
+    max_v = float(getattr(env.cfg.actions.base_velocity, "max_vx", 0.75))
+    return torch.clamp(v / max_v, 0.0, 1.0)
+
+def lateral_oscillation_penalty(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    action = env.action_manager._terms["base_velocity"].processed_actions
+    vy = action[:, 1]
+
+    if not hasattr(env, "navrl_prev_vy_for_reward"):
+        env.navrl_prev_vy_for_reward = torch.zeros(env.num_envs, device=env.device)
+
+    sign_flip = (vy * env.navrl_prev_vy_for_reward < 0.0).float()
+    magnitude = torch.abs(vy - env.navrl_prev_vy_for_reward)
+
+    env.navrl_prev_vy_for_reward[:] = vy
+
+    return torch.clamp(sign_flip * magnitude, 0.0, 1.0)
+
+def _goal_blend(env, asset_cfg: SceneEntityCfg, start: float = 1.5, end: float = 0.30):
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    goal_vec = env.navrl_final_goal_xy - robot_xy
+    goal_dist = torch.norm(goal_vec, dim=-1)
+
+    goal_dir = goal_vec / torch.clamp(goal_dist[:, None], min=1e-6)
+
+    alpha = (start - goal_dist) / max(start - end, 1e-6)
+    goal_alpha = torch.clamp(alpha, 0.0, 1.0)
+    path_alpha = 1.0 - goal_alpha
+
+    return robot_xy, goal_dir, path_alpha, goal_alpha
+
+def static_velocity_clearance_penalty(
+    env,
+    asset_cfg: SceneEntityCfg,
+    safe_distance: float = 0.30,
+    max_range: float = 4.0,
+    num_rays: int = 144,
+    sector_half_angle_rad: float = 0.785398,  # 45 deg
+    min_speed: float = 0.05,
+) -> torch.Tensor:
+    robot = env.scene[asset_cfg.name]
+
+    robot_xy = robot.data.root_pos_w[:, :2] - env.scene.env_origins[:, :2]
+
+    vel_w = robot.data.root_lin_vel_w[:, :2]
+    speed = torch.norm(vel_w, dim=-1)
+
+    robot_yaw = _robot_yaw(env, asset_cfg.name)
+
+    move_yaw = torch.atan2(vel_w[:, 1], vel_w[:, 0])
+
+    # If almost stopped, fall back to robot heading.
+    scan_yaw = torch.where(speed > min_speed, move_yaw, robot_yaw)
+
+    scan = env.nav2_occupancy_map.raycast_scan(
+        robot_xy=robot_xy,
+        robot_yaw=scan_yaw,
+        num_rays=num_rays,
+        max_range=max_range,
+        step_size=0.05,
+    )
+
+    scan_m = scan * max_range
+
+    ray_angles = torch.linspace(
+        -math.pi,
+        math.pi,
+        num_rays + 1,
+        device=env.device,
+    )[:-1]
+
+    sector_mask = torch.abs(ray_angles) <= sector_half_angle_rad
+
+    move_sector_scan = scan_m[:, sector_mask]
+    move_dir_clearance = move_sector_scan.min(dim=-1).values
+
+    penalty = (safe_distance - move_dir_clearance) / safe_distance
+
+    return torch.clamp(penalty, 0.0, 1.0)

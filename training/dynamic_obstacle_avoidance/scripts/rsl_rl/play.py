@@ -214,6 +214,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
             # env stepping
             obs, _, dones, _ = env.step(actions)
+            robot = env.unwrapped.scene["robot"]
+            robot_xy = robot.data.root_pos_w[:, :2] - env.unwrapped.scene.env_origins[:, :2]
+            goal_xy = env.unwrapped.navrl_final_goal_xy
+
+            dist = torch.norm(goal_xy - robot_xy, dim=-1)
+
+            print(
+                "min_goal_dist=",
+                float(dist.min().item()),
+                "mean_goal_dist=",
+                float(dist.mean().item()),
+            )
+            term = env.unwrapped.action_manager._terms["base_velocity"]
+            print(
+                "dist=", float(dist[0].item()),
+                "processed_action=", term.processed_actions[0].detach().cpu().numpy(),
+            )
             # reset recurrent states for episodes that have terminated
             if version.parse(installed_version) >= version.parse("4.0.0"):
                 policy.reset(dones)

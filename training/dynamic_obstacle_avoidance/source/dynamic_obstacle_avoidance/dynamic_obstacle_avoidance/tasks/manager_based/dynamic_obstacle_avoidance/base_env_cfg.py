@@ -113,6 +113,9 @@ class ActionsCfg:
         max_vx=0.75,
         max_vy=0.75,
         max_wz=2.0,
+        max_delta_vx=0.04,
+        max_delta_vy=0.04,
+        max_delta_wz=0.12,
     )
 
 @configclass
@@ -153,6 +156,11 @@ class ObservationsCfg:
             params={"lookahead_points": 32, "path_radius": 0.35},
         )
 
+        time_to_closest_approach = ObsTerm(
+            func=custom_observations.time_to_closest_approach,
+            params={"num_obstacles": 2, "max_range": 4.0, "horizon_s": 3.0},
+        )
+
         # Robot motion
         base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
         base_angle_vel = ObsTerm(func=custom_observations.base_ang_vel)
@@ -191,6 +199,11 @@ class ObservationsCfg:
         path_blocked = ObsTerm(
             func=custom_observations.dynamic_path_blockage,
             params={"lookahead_points": 32, "path_radius": 0.35},
+        )
+
+        time_to_closest_approach = ObsTerm(
+            func=custom_observations.time_to_closest_approach,
+            params={"num_obstacles": 2, "max_range": 4.0, "horizon_s": 3.0},
         )
 
         base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
@@ -256,18 +269,34 @@ class EventCfg:
         },
     )
 
-    print_training_metrics = EventTerm(
-        func=custom_events.print_curriculum_training_metrics,
-        mode="interval",
-        interval_range_s=(10.0, 12.0),
+    reset_stuck_buffers = EventTerm(
+        func=custom_terminations.reset_stuck_buffers,
+        mode="reset",
     )
 
-    print_dr_metrics = EventTerm(
-        func=custom_events.print_domain_randomization_metrics,
+    # print_training_metrics = EventTerm(
+    #     func=custom_events.print_curriculum_training_metrics,
+    #     mode="interval",
+    #     interval_range_s=(10.0, 12.0),
+    # )
+
+    # print_dr_metrics = EventTerm(
+    #     func=custom_events.print_domain_randomization_metrics,
+    #     mode="interval",
+    #     interval_range_s=(10.0, 12.0),
+    # )
+
+    log_curriculum_progress = EventTerm(
+        func=custom_events.log_curriculum_progress,
         mode="interval",
-        interval_range_s=(10.0, 12.0),
+        interval_range_s=(1.0, 1.0),
     )
 
+    log_map_collision_directions = EventTerm(
+        func=custom_events.log_map_collision_directions,
+        mode="interval",
+        interval_range_s=(1.0, 1.0),
+    )
 
 @configclass
 class RewardsCfg:
@@ -309,7 +338,7 @@ class RewardsCfg:
 
     heading_alignment = RewTerm(
         func=custom_rewards.nav2_heading_alignment_reward,
-        weight=0.15,
+        weight=1.5,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
             'lookahead_index_offset': 4,
@@ -335,18 +364,17 @@ class RewardsCfg:
     )
 
     lateral_oscillation = RewTerm(
-        func=custom_rewards.nav2_heading_alignment_reward,
-        weight=0.20,
+        func=custom_rewards.lateral_oscillation_penalty,
+        weight=-0.20,
         params={
-            'asset_cfg': SceneEntityCfg('robot'),
-            'lookahead_index_offset': 4,
+            "asset_cfg": SceneEntityCfg("robot"),
         },
     )
 
 
     map_collision = RewTerm(
         func=custom_rewards.map_collision_penalty,
-        weight=-100.0,
+        weight=-150.0,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
             'radius': 0.22,
@@ -355,7 +383,7 @@ class RewardsCfg:
 
     final_goal = RewTerm(
         func=custom_rewards.final_goal_reward,
-        weight=60.0,
+        weight=120.0,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
             'threshold': 0.30,
@@ -372,9 +400,15 @@ class RewardsCfg:
         weight=-0.02,
     )
 
+    path_velocity = RewTerm(
+        func=custom_rewards.path_velocity_reward,
+        weight=3.0,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+
     time = RewTerm(
         func=custom_rewards.time_penalty,
-        weight=-0.01,
+        weight=-0.03,
     )
 
     no_wait = RewTerm(
@@ -382,6 +416,19 @@ class RewardsCfg:
         weight=-5.0,
         params={"asset_cfg": SceneEntityCfg("robot"), "speed_threshold": 0.10},
     )
+
+    # static_velocity_clearance = RewTerm(
+    #     func=custom_rewards.static_velocity_clearance_penalty,
+    #     weight=-5.0,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "safe_distance": 0.30,
+    #         "max_range": 4.0,
+    #         "num_rays": 144,
+    #         "sector_half_angle_rad": 0.785398,
+    #         "min_speed": 0.05,
+    #     },
+    # )
 
 
 @configclass
@@ -412,6 +459,16 @@ class TerminationsCfg:
         params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22},
     )
 
+    stuck = DoneTerm(
+        func=custom_terminations.stuck_termination,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "speed_threshold": 0.02,
+            "time_window_s": 2.0,
+            "grace_period_s": 2.0,
+        },
+    )
+
 ##
 # Environment configuration
 ##
@@ -433,16 +490,13 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
 
     # Tensor dynamic obstacle/curriculum configuration.
     max_dynamic_obstacles: int = 6
-    curriculum_resets_per_level: int = 200
-    curriculum_max_level: int = 5
-    fixed_curriculum_level: int = -1
     dynamic_obstacle_radius_min: float = 0.18
     dynamic_obstacle_radius_max: float = 0.32
     dynamic_obstacle_deactivate_range: float = 6.0
 
     # Small robustness noise only; dynamic obstacles create the actual avoidance problem.
-    reset_lateral_noise_m: float = 0.10
-    reset_yaw_noise_rad: float = 0.10
+    reset_lateral_noise_m: float = 0.0 #0.10
+    reset_yaw_noise_rad: float = 0.05 #0.10
     path_window_normalization_m: float = 4.0
 
     # Debug controls.
@@ -506,6 +560,28 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     com_level_2_xy_m: float = 0.010
     com_level_3_xy_m: float = 0.020
     com_z_m: float = 0.005
+
+    # curriculum_resets_per_level: int = 200
+    curriculum_max_level: int = 23
+    fixed_curriculum_level: int = -1
+    curriculum_perf_window: int = 1000
+    curriculum_min_samples: int = 500
+
+    curriculum_success_promote: float = 0.75
+    curriculum_map_collision_promote: float = 0.10
+    curriculum_dynamic_collision_promote: float = 0.10
+    curriculum_timeout_promote: float = 0.15
+
+    curriculum_success_demote: float = 0.40
+    curriculum_map_collision_demote: float = 0.20
+    curriculum_dynamic_collision_demote: float = 0.35
+    curriculum_timeout_demote: float = 0.40
+
+    enable_static_action_shield: bool = True
+    shield_robot_radius: float = 0.22
+    shield_num_points: int = 16
+
+    curriculum_order: str = "obstacles_first"  # "obstacles_first" or "dr_first"
 
     # DR logging
     dr_log_every_steps: int = 5000

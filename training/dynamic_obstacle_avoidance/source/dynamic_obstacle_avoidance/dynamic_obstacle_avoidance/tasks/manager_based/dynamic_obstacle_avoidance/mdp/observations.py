@@ -64,7 +64,15 @@ def base_ang_vel(env) -> torch.Tensor:
 
 def previous_action(env) -> torch.Tensor:
     if hasattr(env, "action_manager"):
-        return env.action_manager.action
+        term = env.action_manager._terms["base_velocity"]
+        a = term.processed_actions
+
+        out = torch.zeros_like(a)
+        out[:, 0] = a[:, 0] / term.cfg.max_vx
+        out[:, 1] = a[:, 1] / term.cfg.max_vy
+        out[:, 2] = a[:, 2] / term.cfg.max_wz
+
+        return torch.clamp(out, -1.0, 1.0)
 
     return torch.zeros(env.num_envs, 3, device=env.device)
 
@@ -412,3 +420,161 @@ def _apply_scan_domain_randomization(env, scan: torch.Tensor) -> torch.Tensor:
         scan = torch.where(dropout, torch.ones_like(scan), scan)
 
     return torch.clamp(scan, 0.0, 1.0)
+
+def time_to_closest_approach(
+    env,
+    num_obstacles: int = 2,
+    max_range: float = 4.0,
+    horizon_s: float = 3.0,
+) -> torch.Tensor:
+    """
+    For the N nearest dynamic obstacles, compute:
+        - time to closest approach (TCA): seconds until the gap between
+          robot and obstacle is at its minimum, assuming constant velocities
+        - distance at closest approach (DCA): how close they will actually get
+
+    Output shape: [num_envs, num_obstacles * 2]
+        [tca_0, dca_0, tca_1, dca_1, ...]
+
+    Both are normalized to [0, 1]:
+        - tca normalized by horizon_s
+        - dca normalized by max_range
+
+    Why this helps:
+        A single-frame observation cannot tell the robot "I have 1.5 seconds to
+        sidestep this obstacle." TCA gives the neural network a direct signal
+        for HOW URGENTLY it needs to start a lateral maneuver.
+
+        With TCA, the robot learns:
+            TCA=2.0s -> gradual lateral slide at high speed
+            TCA=0.3s -> sharp emergency turn
+
+        Without TCA, the robot only sees "obstacle is close" and reacts late.
+    """
+    _ensure_dynamic_buffers(env)
+
+    robot = env.scene["robot"]
+    robot_xy = _robot_xy(env)
+    robot_vel = robot.data.root_lin_vel_w[:, :2]
+
+    # Relative position and velocity
+    rel_p = env.dyn_obs_xy - robot_xy[:, None, :]          # [E, O, 2]
+    rel_v = env.dyn_obs_vel_xy - robot_vel[:, None, :]     # [E, O, 2]
+
+    rel_v2 = torch.sum(rel_v * rel_v, dim=-1).clamp_min(1e-6)  # [E, O]
+
+    # TCA: time of closest approach
+    # t* = -dot(rel_p, rel_v) / |rel_v|^2
+    # Clamped to [0, horizon_s]: only future approaches within horizon
+    tca = -torch.sum(rel_p * rel_v, dim=-1) / rel_v2           # [E, O]
+    tca = torch.clamp(tca, 0.0, horizon_s)
+
+    # DCA: position at closest approach
+    closest_point = rel_p + rel_v * tca[..., None]             # [E, O, 2]
+    dca = torch.norm(closest_point, dim=-1)                     # [E, O]
+
+    # Mask inactive obstacles
+    # Inactive obstacles get tca=horizon_s (far future) and dca=max_range (far away)
+    tca = torch.where(env.dyn_obs_active, tca, torch.ones_like(tca) * horizon_s)
+    dca = torch.where(env.dyn_obs_active, dca, torch.ones_like(dca) * max_range)
+
+    # Sort by urgency: smallest TCA first among active obstacles
+    dist_now = torch.norm(rel_p, dim=-1)
+    dist_masked = torch.where(env.dyn_obs_active, dist_now, torch.ones_like(dist_now) * 1e6)
+    k = min(num_obstacles, env.dyn_obs_xy.shape[1])
+    ids = torch.topk(dist_masked, k=k, dim=-1, largest=False).indices
+
+    env_ids = torch.arange(env.num_envs, device=env.device)[:, None]
+    tca_k = tca[env_ids, ids]                                  # [E, k]
+    dca_k = dca[env_ids, ids]                                  # [E, k]
+
+    # Normalize
+    tca_norm = torch.clamp(tca_k / horizon_s, 0.0, 1.0)
+    dca_norm = torch.clamp(dca_k / max_range, 0.0, 1.0)
+
+    # Interleave: [tca_0, dca_0, tca_1, dca_1, ...]
+    out = torch.stack([tca_norm, dca_norm], dim=-1)             # [E, k, 2]
+
+    if k < num_obstacles:
+        pad = torch.ones(env.num_envs, num_obstacles - k, 2, device=env.device)
+        # Pad with "safe" values: tca=1.0 (far future), dca=1.0 (far away)
+        out = torch.cat([out, pad], dim=1)
+
+    return out.reshape(env.num_envs, num_obstacles * 2)
+
+def map_collision_direction_flags(
+    env,
+    radius: float = 0.22,
+    num_points: int = 32,
+) -> dict[str, torch.Tensor]:
+    """
+    Returns collision direction flags:
+        front, left, right, rear, center
+
+    Directions are relative to robot heading.
+    """
+
+    _ensure_nav2_map(env)
+
+    robot_xy = _robot_xy(env)
+    robot_yaw = _robot_yaw(env)
+
+    angles = torch.linspace(
+        -math.pi,
+        math.pi,
+        num_points + 1,
+        device=env.device,
+    )[:-1]
+
+    # Convert robot-relative footprint points to world/map frame.
+    local_offsets = torch.stack(
+        [
+            torch.cos(angles) * radius,
+            torch.sin(angles) * radius,
+        ],
+        dim=-1,
+    )
+
+    cos_yaw = torch.cos(robot_yaw)
+    sin_yaw = torch.sin(robot_yaw)
+
+    x = local_offsets[:, 0][None, :]
+    y = local_offsets[:, 1][None, :]
+
+    wx = cos_yaw[:, None] * x - sin_yaw[:, None] * y
+    wy = sin_yaw[:, None] * x + cos_yaw[:, None] * y
+
+    footprint_points = robot_xy[:, None, :] + torch.stack([wx, wy], dim=-1)
+
+    occupied = env.nav2_occupancy_map.is_occupied_world(
+        footprint_points.reshape(-1, 2),
+        unknown_is_occupied=True,
+    ).reshape(env.num_envs, num_points)
+
+    center_hit = env.nav2_occupancy_map.is_occupied_world(
+        robot_xy,
+        unknown_is_occupied=True,
+    )
+
+    # Angles are robot-relative:
+    # front: -45° to +45°
+    # left : +45° to +135°
+    # right: -135° to -45°
+    # rear : outside the above, around ±180°
+    front_mask = torch.abs(angles) <= (math.pi / 4.0)
+    left_mask = (angles > math.pi / 4.0) & (angles <= 3.0 * math.pi / 4.0)
+    right_mask = (angles < -math.pi / 4.0) & (angles >= -3.0 * math.pi / 4.0)
+    rear_mask = torch.abs(angles) > 3.0 * math.pi / 4.0
+
+    front_hit = occupied[:, front_mask].any(dim=-1)
+    left_hit = occupied[:, left_mask].any(dim=-1)
+    right_hit = occupied[:, right_mask].any(dim=-1)
+    rear_hit = occupied[:, rear_mask].any(dim=-1)
+
+    return {
+        "front": front_hit,
+        "left": left_hit,
+        "right": right_hit,
+        "rear": rear_hit,
+        "center": center_hit,
+    }

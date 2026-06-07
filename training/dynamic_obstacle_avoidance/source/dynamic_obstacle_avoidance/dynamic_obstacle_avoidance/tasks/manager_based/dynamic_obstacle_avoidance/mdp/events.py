@@ -6,6 +6,7 @@ import torch
 from .path_dataset import Nav2PathDataset
 from .nav2_map import Nav2OccupancyMap
 from isaaclab.managers import SceneEntityCfg
+from .observations import map_collision_direction_flags
 
 def _ensure_nav2_path_buffers(env, max_path_points: int = 600):
     device = env.device
@@ -56,6 +57,13 @@ def reset_nav2_path_dataset(
 
     starts, goals, paths, valid_counts, path_lengths = env.nav2_path_dataset.sample_batch(env_ids)
 
+    # Force final goal/marker to match actual path end.
+    env_ids_local = torch.arange(len(env_ids), device=env.device)
+    last_idx = torch.clamp(valid_counts - 1, min=0)
+    last_xy = paths[env_ids_local, last_idx]
+
+    goals = goals.clone()
+    goals[:, 0:2] = last_xy
     env.navrl_start_pose[env_ids] = starts
     env.navrl_goal_pose[env_ids] = goals
     env.navrl_global_path_xy[env_ids] = paths
@@ -169,6 +177,10 @@ def reset_nav2_path_and_debug_validate(
     #     env.navrl_prev_abs_lat_error = torch.zeros(env.num_envs, device=env.device)
 
     # env.navrl_prev_abs_lat_error[env_ids] = 0.0
+    if not hasattr(env, "navrl_prev_vy_for_reward"):
+        env.navrl_prev_vy_for_reward = torch.zeros(env.num_envs, device=env.device)
+
+    env.navrl_prev_vy_for_reward[env_ids] = 0.0
 
     env.navrl_prev_cte_for_reward[env_ids] = cte_now[env_ids]
     env.navrl_prev_goal_dist[env_ids] = goal_dist_now[env_ids]
@@ -291,7 +303,8 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
       5+: mixed 2-3 obstacles
     """
     _ensure_dynamic_obstacle_buffers(env)
-
+    if hasattr(env, "termination_manager"):
+        update_performance_curriculum_on_reset(env, env_ids)
     robot = env.scene[asset_cfg.name]
     robot_xy = robot.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2]
     fixed_level = int(getattr(env.cfg, "fixed_curriculum_level", -1))
@@ -299,11 +312,9 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
     if fixed_level >= 0:
         env.navrl_curriculum_level[env_ids] = fixed_level
     else:
-        env.navrl_reset_count[env_ids] += 1
-        steps_per_level = int(getattr(env.cfg, "curriculum_resets_per_level", 200))
-        max_level = int(getattr(env.cfg, "curriculum_max_level", 5))
-        env.navrl_curriculum_level[env_ids] = torch.clamp(env.navrl_reset_count[env_ids] // steps_per_level, 0, max_level,)
-
+        _ensure_performance_curriculum_buffers(env)
+        env.navrl_curriculum_level[env_ids] = int(env.navrl_curriculum_level_global)
+    env.navrl_reset_count[env_ids] += 1
     reset_domain_randomization(env, env_ids, asset_cfg=asset_cfg)
 
     env.dyn_obs_active[env_ids] = False
@@ -316,85 +327,164 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
     valid_count = env.navrl_path_valid_count
     num_obs = env.dyn_obs_xy.shape[1]
 
-    base_radius_min = float(getattr(env.cfg, "dynamic_obstacle_radius_min", 0.18))
-    base_radius_max = float(getattr(env.cfg, "dynamic_obstacle_radius_max", 0.32))
-
     for local_i, env_id_t in enumerate(env_ids):
         env_id = int(env_id_t.item())
-        level = int(env.navrl_curriculum_level[env_id].item())
+        # obstacle_level = int(env.navrl_curriculum_level[env_id].item())
+        raw_level = int(env.navrl_curriculum_level[env_id].item())
+        obstacle_level, _ = get_curriculum_sublevels(env, raw_level)
         vc = int(valid_count[env_id].item())
-        if vc < 12 or level <= 0:
+        if vc < 12 or obstacle_level <= 0:
             continue
 
-        if level == 1:
-            active_count = 1
-        elif level <= 3:
-            active_count = 1
-        elif level == 4:
-            active_count = min(2, num_obs)
-        else:
-            active_count = min(3, num_obs)
+        modes = []
+        if obstacle_level >= 1: modes.append("side_stationary_tiny")
+        if obstacle_level >= 2: modes.append("side_stationary_small")
+        if obstacle_level >= 3: modes.append("center_stationary_tiny")
+        if obstacle_level >= 4: modes.append("center_stationary_small")
+        if obstacle_level >= 5: modes.append("center_stationary_medium")
+        if obstacle_level >= 6: modes.append("slow_crossing_far")
+        if obstacle_level >= 7: modes.append("slow_crossing_near")
+        if obstacle_level >= 8: modes.append("medium_crossing_far")
+        if obstacle_level >= 9: modes.append("medium_crossing_near")
+        if obstacle_level >= 10: modes.append("fast_crossing_far")
+        if obstacle_level >= 11: modes.append("same_lane_slow")
+        if obstacle_level >= 12: modes.append("same_lane_medium")
+        if obstacle_level >= 13: modes.append("reverse_same_lane_slow")
+        if obstacle_level >= 14: modes.append("center_stationary_large")
+        if obstacle_level >= 15: modes.append("two_crossing_combo")
 
-        # Spawn obstacles ahead of the robot, on or near the future path.
+        modes = modes[:num_obs]
+
         start_idx = max(5, int(0.10 * vc))
         end_idx = max(start_idx + 1, min(vc - 2, int(0.65 * vc)))
 
-        for j in range(active_count):
+        for j, mode in enumerate(modes):
             idx = int(torch.randint(start_idx, end_idx, (1,), device=env.device).item())
+
             p0 = path[env_id, idx]
             p1 = path[env_id, min(idx + 4, vc - 1)]
+
             tangent = p1 - p0
             tangent = tangent / torch.norm(tangent).clamp_min(1e-6)
-            normal = torch.stack([-tangent[1], tangent[0]])
 
-            radius = torch.empty((), device=env.device).uniform_(base_radius_min, base_radius_max)
+            normal = torch.stack([-tangent[1], tangent[0]])
             side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
 
-            if level == 1:
-                # stationary obstacle directly on path
+            if mode == "side_stationary_tiny":
+                radius = torch.empty((), device=env.device).uniform_(0.08, 0.11)
+                offset = side * torch.empty((), device=env.device).uniform_(0.45, 0.60)
+                pos = p0 + offset * normal
+                vel = torch.zeros(2, device=env.device)
+                scenario = 1
+
+            elif mode == "side_stationary_small":
+                radius = torch.empty((), device=env.device).uniform_(0.10, 0.14)
+                offset = side * torch.empty((), device=env.device).uniform_(0.35, 0.50)
+                pos = p0 + offset * normal
+                vel = torch.zeros(2, device=env.device)
+                scenario = 1
+
+            elif mode == "center_stationary_tiny":
+                radius = torch.empty((), device=env.device).uniform_(0.08, 0.11)
                 pos = p0
                 vel = torch.zeros(2, device=env.device)
                 scenario = 1
-            elif level <= 3:
-                # crossing obstacle starts on one side and moves through path corridor
-                offset = side * torch.empty((), device=env.device).uniform_(0.55, 1.20)
+
+            elif mode == "center_stationary_small":
+                radius = torch.empty((), device=env.device).uniform_(0.10, 0.14)
+                pos = p0
+                vel = torch.zeros(2, device=env.device)
+                scenario = 1
+
+            elif mode == "center_stationary_medium":
+                radius = torch.empty((), device=env.device).uniform_(0.14, 0.18)
+                pos = p0
+                vel = torch.zeros(2, device=env.device)
+                scenario = 1
+
+            elif mode == "slow_crossing_far":
+                radius = torch.empty((), device=env.device).uniform_(0.10, 0.15)
+                offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.50)
+                speed = torch.empty((), device=env.device).uniform_(0.04, 0.10)
                 pos = p0 + offset * normal
-                speed_max = 0.25 if level == 2 else 0.45
-                speed = torch.empty((), device=env.device).uniform_(0.10, speed_max)
                 vel = -side * speed * normal
                 scenario = 2
-            elif level == 4 and j == 1:
-                # same-lane slow obstacle ahead; encourages bypass instead of waiting
-                pos = p0
-                speed = torch.empty((), device=env.device).uniform_(0.05, 0.18)
+
+            elif mode == "slow_crossing_near":
+                radius = torch.empty((), device=env.device).uniform_(0.10, 0.16)
+                offset = side * torch.empty((), device=env.device).uniform_(0.75, 1.10)
+                speed = torch.empty((), device=env.device).uniform_(0.06, 0.14)
+                pos = p0 + offset * normal
+                vel = -side * speed * normal
+                scenario = 2
+
+            elif mode == "medium_crossing_far":
+                radius = torch.empty((), device=env.device).uniform_(0.12, 0.18)
+                offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.50)
+                speed = torch.empty((), device=env.device).uniform_(0.12, 0.22)
+                pos = p0 + offset * normal
+                vel = -side * speed * normal
+                scenario = 2
+
+            elif mode == "medium_crossing_near":
+                radius = torch.empty((), device=env.device).uniform_(0.12, 0.20)
+                offset = side * torch.empty((), device=env.device).uniform_(0.75, 1.10)
+                speed = torch.empty((), device=env.device).uniform_(0.16, 0.28)
+                pos = p0 + offset * normal
+                vel = -side * speed * normal
+                scenario = 2
+
+            elif mode == "fast_crossing_far":
+                radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
+                offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.60)
+                speed = torch.empty((), device=env.device).uniform_(0.25, 0.40)
+                pos = p0 + offset * normal
+                vel = -side * speed * normal
+                scenario = 2
+
+            elif mode == "same_lane_slow":
+                radius = torch.empty((), device=env.device).uniform_(0.10, 0.16)
+                ahead = torch.empty((), device=env.device).uniform_(0.30, 0.70)
+                speed = torch.empty((), device=env.device).uniform_(0.04, 0.10)
+                pos = p0 + ahead * tangent
                 vel = speed * tangent
                 scenario = 3
-            else:
-                # mixed crossing/head-on/stationary
-                scenario_sample = int(torch.randint(1, 4, (1,), device=env.device).item())
-                if scenario_sample == 1:
-                    pos = p0
-                    vel = torch.zeros(2, device=env.device)
-                    scenario = 1
-                elif scenario_sample == 2:
-                    offset = side * torch.empty((), device=env.device).uniform_(0.55, 1.30)
-                    pos = p0 + offset * normal
-                    speed = torch.empty((), device=env.device).uniform_(0.12, 0.50)
-                    vel = -side * speed * normal
-                    scenario = 2
-                else:
-                    pos = p0 + torch.empty((), device=env.device).uniform_(0.2, 0.8) * tangent
-                    speed = torch.empty((), device=env.device).uniform_(0.05, 0.30)
-                    direction = -1.0 if torch.rand((), device=env.device).item() > 0.5 else 1.0
-                    vel = direction * speed * tangent
-                    scenario = 3
+
+            elif mode == "same_lane_medium":
+                radius = torch.empty((), device=env.device).uniform_(0.12, 0.20)
+                ahead = torch.empty((), device=env.device).uniform_(0.30, 0.80)
+                speed = torch.empty((), device=env.device).uniform_(0.10, 0.20)
+                pos = p0 + ahead * tangent
+                vel = speed * tangent
+                scenario = 3
+
+            elif mode == "reverse_same_lane_slow":
+                radius = torch.empty((), device=env.device).uniform_(0.10, 0.18)
+                ahead = torch.empty((), device=env.device).uniform_(0.50, 1.00)
+                speed = torch.empty((), device=env.device).uniform_(0.04, 0.12)
+                pos = p0 + ahead * tangent
+                vel = -speed * tangent
+                scenario = 3
+
+            elif mode == "center_stationary_large":
+                radius = torch.empty((), device=env.device).uniform_(0.18, 0.24)
+                pos = p0
+                vel = torch.zeros(2, device=env.device)
+                scenario = 1
+
+            else:  # two_crossing_combo
+                radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
+                offset = side * torch.empty((), device=env.device).uniform_(0.80, 1.30)
+                speed = torch.empty((), device=env.device).uniform_(0.12, 0.30)
+                pos = p0 + offset * normal
+                vel = -side * speed * normal
+                scenario = 2
 
             env.dyn_obs_xy[env_id, j] = pos
             env.dyn_obs_vel_xy[env_id, j] = vel
             env.dyn_obs_radius[env_id, j] = radius
             env.dyn_obs_active[env_id, j] = True
             env.dyn_obs_scenario[env_id, j] = scenario
-
 
 def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
     """Move tensor obstacles and respawn inactive/out-of-range ones ahead of the robot."""
@@ -670,6 +760,18 @@ def _ensure_training_reward_buffers(env, max_path_points: int = 600):
             device=env.device,
         )
 
+def _ensure_performance_curriculum_buffers(env):
+    device = env.device
+    window = int(getattr(env.cfg, "curriculum_perf_window", 1000))
+
+    if not hasattr(env, "navrl_perf_success"):
+        env.navrl_perf_success = torch.zeros(window, device=device)
+        env.navrl_perf_map_collision = torch.zeros(window, device=device)
+        env.navrl_perf_dynamic_collision = torch.zeros(window, device=device)
+        env.navrl_perf_timeout = torch.zeros(window, device=device)
+        env.navrl_perf_idx = 0
+        env.navrl_perf_filled = 0
+        env.navrl_curriculum_level_global = 0
 
 def _ensure_domain_randomization_buffers(env):
     device = env.device
@@ -697,108 +799,180 @@ def _ensure_domain_randomization_buffers(env):
     if not hasattr(env, "dr_com_shift_norm"):
         env.dr_com_shift_norm = torch.zeros(env.num_envs, device=device)
 
+def update_performance_curriculum_on_reset(env, env_ids: torch.Tensor):
+    _ensure_performance_curriculum_buffers(env)
+
+    window = env.navrl_perf_success.shape[0]
+
+    # These buffers are usually available in ManagerBasedRLEnv.
+    terminated = env.termination_manager.terminated[env_ids]
+    time_out = env.termination_manager.time_outs[env_ids]
+
+    # Individual termination terms
+    final_goal = env.termination_manager.get_term("final_goal_reached")[env_ids]
+    map_col = env.termination_manager.get_term("map_collision")[env_ids]
+    dyn_col = env.termination_manager.get_term("dynamic_collision")[env_ids]
+
+    for i in range(len(env_ids)):
+        idx = env.navrl_perf_idx % window
+
+        env.navrl_perf_success[idx] = final_goal[i].float()
+        env.navrl_perf_map_collision[idx] = map_col[i].float()
+        env.navrl_perf_dynamic_collision[idx] = dyn_col[i].float()
+        env.navrl_perf_timeout[idx] = time_out[i].float()
+
+        env.navrl_perf_idx += 1
+        env.navrl_perf_filled = min(env.navrl_perf_filled + 1, window)
+
+    # Do not promote before enough data exists.
+    min_samples = int(getattr(env.cfg, "curriculum_min_samples", 300))
+    if env.navrl_perf_filled < min_samples:
+        return
+
+    n = env.navrl_perf_filled
+    success_rate = env.navrl_perf_success[:n].mean()
+    map_rate = env.navrl_perf_map_collision[:n].mean()
+    dyn_rate = env.navrl_perf_dynamic_collision[:n].mean()
+    timeout_rate = env.navrl_perf_timeout[:n].mean()
+
+    promote = (
+        success_rate >= float(getattr(env.cfg, "curriculum_success_promote", 0.70))
+        and map_rate <= float(getattr(env.cfg, "curriculum_map_collision_promote", 0.10))
+        and dyn_rate <= float(getattr(env.cfg, "curriculum_dynamic_collision_promote", 0.05))
+        and timeout_rate <= float(getattr(env.cfg, "curriculum_timeout_promote", 0.20))
+    )
+
+    demote = (
+        success_rate < float(getattr(env.cfg, "curriculum_success_demote", 0.30))
+        or map_rate > float(getattr(env.cfg, "curriculum_map_collision_demote", 0.30))
+        or dyn_rate > float(getattr(env.cfg, "curriculum_dynamic_collision_demote", 0.20))
+        or timeout_rate > float(getattr(env.cfg, "curriculum_timeout_demote", 0.50))
+    )
+
+    max_level = int(getattr(env.cfg, "curriculum_max_level", 5))
+
+    if promote:
+        env.navrl_curriculum_level_global = min(env.navrl_curriculum_level_global + 1, max_level)
+        env.navrl_perf_success.zero_()
+        env.navrl_perf_map_collision.zero_()
+        env.navrl_perf_dynamic_collision.zero_()
+        env.navrl_perf_timeout.zero_()
+        env.navrl_perf_idx = 0
+        env.navrl_perf_filled = 0
+
+    elif demote:
+        env.navrl_curriculum_level_global = max(env.navrl_curriculum_level_global - 1, 0)
+        env.navrl_perf_success.zero_()
+        env.navrl_perf_map_collision.zero_()
+        env.navrl_perf_dynamic_collision.zero_()
+        env.navrl_perf_timeout.zero_()
+        env.navrl_perf_idx = 0
+        env.navrl_perf_filled = 0
+
+    # Your obstacle reset code must read this level.
+    env.navrl_curriculum_level[:] = int(env.navrl_curriculum_level_global)
 
 def reset_domain_randomization(env, env_ids: torch.Tensor, asset_cfg: SceneEntityCfg | None = None):
     _ensure_domain_randomization_buffers(env)
 
     if hasattr(env, "navrl_curriculum_level"):
-        level = env.navrl_curriculum_level[env_ids].clamp(0, 3)
+        level = env.navrl_curriculum_level[env_ids]
     else:
         level = torch.zeros(len(env_ids), dtype=torch.long, device=env.device)
+    
+    dr_levels = torch.zeros_like(level)
 
-    rays_table = torch.tensor([
-        int(getattr(env.cfg, "lidar_level_0_rays", 72)),
-        int(getattr(env.cfg, "lidar_level_1_rays", 144)),
-        int(getattr(env.cfg, "lidar_level_2_rays", 288)),
-        int(getattr(env.cfg, "lidar_level_3_rays", 360)),
-    ], dtype=torch.long, device=env.device)
+    for i in range(len(env_ids)):
+        raw_level = int(level[i].item())
+        _, dr_level_i = get_curriculum_sublevels(env, raw_level)
+        dr_levels[i] = dr_level_i
+    # --------------------------------------------------
+    # Rule:
+    # Levels 0–15  : NO domain randomization.
+    # Levels 16+   : Start DR one difficulty at a time.
+    # --------------------------------------------------
+    dr_mask = dr_levels > 0
+    # Defaults: no DR
+    env.dr_lidar_rays[env_ids] = int(getattr(env.cfg, "lidar_level_0_rays", 72))
+    env.dr_scan_noise_std[env_ids] = 0.0
+    env.dr_scan_dropout_prob[env_ids] = 0.0
+    env.motor_strength_scale[env_ids] = 1.0
+    env.action_delay_steps[env_ids] = 0
+    env.dr_mass_scale[env_ids] = 1.0
+    env.dr_com_shift_norm[env_ids] = 0.0
 
-    noise_table = torch.tensor([
-        float(getattr(env.cfg, "scan_noise_level_0", 0.0)),
-        float(getattr(env.cfg, "scan_noise_level_1", 0.005)),
-        float(getattr(env.cfg, "scan_noise_level_2", 0.01)),
-        float(getattr(env.cfg, "scan_noise_level_3", 0.02)),
-    ], device=env.device)
+    if not torch.any(dr_mask):
+        return
 
-    dropout_table = torch.tensor([
-        float(getattr(env.cfg, "scan_dropout_level_0", 0.0)),
-        float(getattr(env.cfg, "scan_dropout_level_1", 0.01)),
-        float(getattr(env.cfg, "scan_dropout_level_2", 0.02)),
-        float(getattr(env.cfg, "scan_dropout_level_3", 0.03)),
-    ], device=env.device)
+    ids = env_ids[dr_mask]
+    ids = env_ids[dr_mask]
+    dr_level = torch.clamp(dr_levels[dr_mask] - 1, min=0, max=7)
+    # --------------------------------------------------
+    # DR curriculum after obstacle curriculum:
+    #
+    # Level 16: increase lidar rays only
+    # Level 17: add scan noise only
+    # Level 18: add scan dropout only
+    # Level 19: add action delay only
+    # Level 20: add motor strength variation only
+    # Level 21: add mass variation only
+    # Level 22: add COM shift only
+    # Level 23+: combine all stronger DR
+    # --------------------------------------------------
 
-    batt_min_table = torch.tensor([
-        float(getattr(env.cfg, "battery_level_0_min", 1.0)),
-        float(getattr(env.cfg, "battery_level_1_min", 0.95)),
-        float(getattr(env.cfg, "battery_level_2_min", 0.90)),
-        float(getattr(env.cfg, "battery_level_3_min", 0.80)),
-    ], device=env.device)
+    noise_max = torch.tensor([0.0, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.010], device=env.device)[dr_level]
+    dropout_max = torch.tensor([0.0, 0.0, 0.01, 0.01, 0.01, 0.01, 0.01, 0.02], device=env.device)[dr_level]
+    motor_min = torch.tensor([1.0, 1.0, 1.0, 0.95, 0.95, 0.95, 0.95, 0.90], device=env.device)[dr_level]
+    delay_max = torch.tensor([0, 0, 0, 0, 1, 1, 1, 2], dtype=torch.long, device=env.device)[dr_level]
+    mass_min = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 0.95, 0.95, 0.90], device=env.device)[dr_level]
+    mass_max = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.05, 1.05, 1.10], device=env.device)[dr_level]
+    com_max = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.005, 0.010], device=env.device)[dr_level]
 
-    batt_max_table = torch.tensor([
-        float(getattr(env.cfg, "battery_level_0_max", 1.0)),
-        float(getattr(env.cfg, "battery_level_1_max", 1.0)),
-        float(getattr(env.cfg, "battery_level_2_max", 1.0)),
-        float(getattr(env.cfg, "battery_level_3_max", 1.0)),
-    ], device=env.device)
 
-    delay_table = torch.tensor([
-        int(getattr(env.cfg, "action_delay_level_0", 0)),
-        int(getattr(env.cfg, "action_delay_level_1", 1)),
-        int(getattr(env.cfg, "action_delay_level_2", 2)),
-        int(getattr(env.cfg, "action_delay_level_3", 3)),
-    ], dtype=torch.long, device=env.device)
+    # LiDAR ray count randomization starts at level 16 and remains active.
+    choices = torch.tensor([72, 96, 120, 144], dtype=torch.long, device=env.device)
+    pick = torch.randint(0, choices.numel(), (len(ids),), device=env.device)
+    env.dr_lidar_rays[ids] = choices[pick]
 
-    mass_min_table = torch.tensor([
-        float(getattr(env.cfg, "mass_level_0_min", 1.0)),
-        float(getattr(env.cfg, "mass_level_1_min", 0.95)),
-        float(getattr(env.cfg, "mass_level_2_min", 0.90)),
-        float(getattr(env.cfg, "mass_level_3_min", 0.85)),
-    ], device=env.device)
+    # Scan noise: random [0, noise_max]
+    env.dr_scan_noise_std[ids] = torch.rand(len(ids), device=env.device) * noise_max
 
-    mass_max_table = torch.tensor([
-        float(getattr(env.cfg, "mass_level_0_max", 1.0)),
-        float(getattr(env.cfg, "mass_level_1_max", 1.05)),
-        float(getattr(env.cfg, "mass_level_2_max", 1.10)),
-        float(getattr(env.cfg, "mass_level_3_max", 1.15)),
-    ], device=env.device)
+    # Dropout: random [0, dropout_max]
+    env.dr_scan_dropout_prob[ids] = torch.rand(len(ids), device=env.device) * dropout_max
 
-    com_xy_table = torch.tensor([
-        float(getattr(env.cfg, "com_level_0_xy_m", 0.0)),
-        float(getattr(env.cfg, "com_level_1_xy_m", 0.005)),
-        float(getattr(env.cfg, "com_level_2_xy_m", 0.010)),
-        float(getattr(env.cfg, "com_level_3_xy_m", 0.020)),
-    ], device=env.device)
+    # Motor strength: random [motor_min, 1.0]
+    env.motor_strength_scale[ids] = motor_min + torch.rand(len(ids), device=env.device) * (1.0 - motor_min)
 
-    env.dr_lidar_rays[env_ids] = rays_table[level]
-    env.dr_scan_noise_std[env_ids] = noise_table[level]
-    env.dr_scan_dropout_prob[env_ids] = dropout_table[level]
+    # Action delay: random integer [0, delay_max]
+    delay_rand = torch.rand(len(ids), device=env.device)
+    env.action_delay_steps[ids] = torch.floor(delay_rand * (delay_max.float() + 1.0)).long()
 
-    bmin = batt_min_table[level]
-    bmax = batt_max_table[level]
-    env.motor_strength_scale[env_ids] = bmin + torch.rand(len(env_ids), device=env.device) * (bmax - bmin)
+    # Mass scale: random [mass_min, mass_max]
+    env.dr_mass_scale[ids] = mass_min + torch.rand(len(ids), device=env.device) * (mass_max - mass_min)
 
-    env.action_delay_steps[env_ids] = delay_table[level]
+    # COM shift: random within [-com_max, +com_max]
+    shift_x = (torch.rand(len(ids), device=env.device) * 2.0 - 1.0) * com_max
+    shift_y = (torch.rand(len(ids), device=env.device) * 2.0 - 1.0) * com_max
+    shift_z = (
+        (torch.rand(len(ids), device=env.device) * 2.0 - 1.0)
+        * float(getattr(env.cfg, "com_z_m", 0.005))
+        * (com_max > 0.0).float()
+    )
 
-    mmin = mass_min_table[level]
-    mmax = mass_max_table[level]
-    env.dr_mass_scale[env_ids] = mmin + torch.rand(len(env_ids), device=env.device) * (mmax - mmin)
-
-    com_xy = com_xy_table[level]
-    shift_x = (torch.rand(len(env_ids), device=env.device) * 2.0 - 1.0) * com_xy
-    shift_y = (torch.rand(len(env_ids), device=env.device) * 2.0 - 1.0) * com_xy
-    shift_z = (torch.rand(len(env_ids), device=env.device) * 2.0 - 1.0) * float(getattr(env.cfg, "com_z_m", 0.005))
-    env.dr_com_shift_norm[env_ids] = torch.sqrt(shift_x * shift_x + shift_y * shift_y + shift_z * shift_z)
-
-    # Physics randomization is meaningful only if IsaacLab API supports it in your version.
+    env.dr_com_shift_norm[ids] = torch.sqrt(
+        shift_x * shift_x + shift_y * shift_y + shift_z * shift_z
+    )
+    # Apply mass randomization to PhysX if available.
     if asset_cfg is not None:
         robot = env.scene[asset_cfg.name]
         if hasattr(robot, "root_physx_view"):
             try:
                 if not hasattr(env, "default_body_masses"):
                     env.default_body_masses = robot.root_physx_view.get_masses().clone()
+
                 masses = env.default_body_masses.clone()
-                masses[env_ids] = env.default_body_masses[env_ids] * env.dr_mass_scale[env_ids, None]
-                robot.root_physx_view.set_masses(masses, env_ids)
+                masses[ids] = env.default_body_masses[ids] * env.dr_mass_scale[ids, None]
+                robot.root_physx_view.set_masses(masses, ids)
             except Exception:
                 pass
 
@@ -859,6 +1033,27 @@ def randomize_robot_mass_com(env, env_ids: torch.Tensor, asset_cfg: SceneEntityC
 
     robot.root_physx_view.set_masses(masses, env_ids)
     robot.root_physx_view.set_coms(coms, env_ids)
+
+def get_curriculum_sublevels(env, raw_level: int) -> tuple[int, int]:
+    order = str(getattr(env.cfg, "curriculum_order", "obstacles_first"))
+
+    if order == "dr_first":
+        if raw_level <= 8:
+            dr_level = raw_level
+            obstacle_level = 0
+        else:
+            dr_level = 8
+            obstacle_level = min(raw_level - 8, 15)
+
+    else:
+        if raw_level <= 15:
+            obstacle_level = raw_level
+            dr_level = 0
+        else:
+            obstacle_level = 15
+            dr_level = min(raw_level - 15, 8)
+
+    return obstacle_level, dr_level
 
 def print_curriculum_training_metrics(env, env_ids: torch.Tensor | None = None):
     if not hasattr(env, "dyn_obs_active"):
@@ -936,3 +1131,48 @@ def print_domain_randomization_metrics(env, env_ids: torch.Tensor | None = None)
         f"  vy_ratio               : {(vy.abs() / (vx.abs() + vy.abs() + 1e-6)).mean().item():.3f}\n",
         flush=True,
     )
+
+def log_curriculum_progress(env, env_ids: torch.Tensor | None = None):
+    if not hasattr(env, "navrl_curriculum_level"):
+        return
+
+    if not hasattr(env, "extras"):
+        return
+
+    if "log" not in env.extras:
+        env.extras["log"] = {}
+
+    levels = env.navrl_curriculum_level.float()
+
+    env.extras["log"]["Curriculum/level_mean"] = levels.mean()
+    env.extras["log"]["Curriculum/level_min"] = levels.min()
+    env.extras["log"]["Curriculum/level_max"] = levels.max()
+
+    if hasattr(env, "navrl_perf_filled") and env.navrl_perf_filled > 0:
+        n = env.navrl_perf_filled
+
+        env.extras["log"]["Curriculum/recent_success_rate"] = env.navrl_perf_success[:n].mean()
+        env.extras["log"]["Curriculum/recent_map_collision_rate"] = env.navrl_perf_map_collision[:n].mean()
+        env.extras["log"]["Curriculum/recent_dynamic_collision_rate"] = env.navrl_perf_dynamic_collision[:n].mean()
+        env.extras["log"]["Curriculum/recent_timeout_rate"] = env.navrl_perf_timeout[:n].mean()
+        env.extras["log"]["Curriculum/perf_samples"] = torch.tensor(float(n), device=env.device)
+
+
+def log_map_collision_directions(env, env_ids: torch.Tensor | None = None):
+    if not hasattr(env, "extras"):
+        return
+
+    if "log" not in env.extras:
+        env.extras["log"] = {}
+
+    flags = map_collision_direction_flags(
+        env,
+        radius=0.22,
+        num_points=32,
+    )
+
+    env.extras["log"]["MapCollision/front_rate"] = flags["front"].float().mean()
+    env.extras["log"]["MapCollision/left_rate"] = flags["left"].float().mean()
+    env.extras["log"]["MapCollision/right_rate"] = flags["right"].float().mean()
+    env.extras["log"]["MapCollision/rear_rate"] = flags["rear"].float().mean()
+    env.extras["log"]["MapCollision/center_rate"] = flags["center"].float().mean()

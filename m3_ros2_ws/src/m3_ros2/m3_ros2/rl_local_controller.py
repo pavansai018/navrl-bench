@@ -288,6 +288,34 @@ class RLLocalController(Node):
         if obs is None:
             return
 
+        pose_result = self.get_robot_pose_in_map()
+        if pose_result is None:
+            return
+        robot_xy, _ = pose_result
+        # --------------------------------------------------
+        # EXACT IsaacLab final_goal_reached equivalent
+        # --------------------------------------------------
+        if self.latest_path is not None and len(self.latest_path) > 0:
+
+            goal_xy = self.latest_path[-1]
+
+            dist_to_goal = np.linalg.norm(
+                goal_xy - robot_xy
+            )
+            self.get_logger().warn(
+                f"goal={goal_xy}, robot={robot_xy}, dist={dist_to_goal:.3f}"
+            )
+
+            if dist_to_goal < 0.30:
+
+                stop_cmd = Twist()
+
+                self.cmd_pub.publish(stop_cmd)
+
+                self.previous_action[:] = 0.0
+                self.applied_cmd[:] = 0.0
+
+                return
         raw_action = self.session.run(
             [self.output_name],
             {self.input_name: obs.reshape(1, -1)},
@@ -332,16 +360,16 @@ class RLLocalController(Node):
             self.cmd_pub.publish(cmd)
 
         self._debug_count += 1
-        if self._debug_count % 30 == 0:
-            self.get_logger().info(
-                f"obs_dim={obs.shape[0]}, "
-                f"heading={obs[16]:+.3f}, "
-                f"cte={obs[17]:+.3f}, "
-                f"scan_min_m={float(np.min(self.latest_scan_m)):.3f}, "
-                f"raw_action=[{raw_action[0]:+.3f}, {raw_action[1]:+.3f}, {raw_action[2]:+.3f}], "
-                f"cmd=[{cmd.linear.x:+.3f}, {cmd.linear.y:+.3f}, {cmd.angular.z:+.3f}], "
-                f"prev=[{self.previous_action[0]:+.3f}, {self.previous_action[1]:+.3f}, {self.previous_action[2]:+.3f}]"
-            )
+        # if self._debug_count % 30 == 0:
+        #     self.get_logger().info(
+        #         f"obs_dim={obs.shape[0]}, "
+        #         f"heading={obs[16]:+.3f}, "
+        #         f"cte={obs[17]:+.3f}, "
+        #         f"scan_min_m={float(np.min(self.latest_scan_m)):.3f}, "
+        #         f"raw_action=[{raw_action[0]:+.3f}, {raw_action[1]:+.3f}, {raw_action[2]:+.3f}], "
+        #         f"cmd=[{cmd.linear.x:+.3f}, {cmd.linear.y:+.3f}, {cmd.angular.z:+.3f}], "
+        #         f"prev=[{self.previous_action[0]:+.3f}, {self.previous_action[1]:+.3f}, {self.previous_action[2]:+.3f}]"
+        #     )
 
 
 def main():

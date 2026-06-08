@@ -146,20 +146,20 @@ class ObservationsCfg:
             params={"num_rays": 144, "max_range": 4.0, "step_size": 0.10},
         )
 
-        dynamic_obstacles = ObsTerm(
-            func=custom_observations.dynamic_obstacle_states,
-            params={"num_obstacles": 4, "max_range": 4.0},
-        )
+        # dynamic_obstacles = ObsTerm(
+        #     func=custom_observations.dynamic_obstacle_states,
+        #     params={"num_obstacles": 4, "max_range": 4.0},
+        # )
 
-        path_blocked = ObsTerm(
-            func=custom_observations.dynamic_path_blockage,
-            params={"lookahead_points": 32, "path_radius": 0.35},
-        )
+        # path_blocked = ObsTerm(
+        #     func=custom_observations.dynamic_path_blockage,
+        #     params={"lookahead_points": 32, "path_radius": 0.35},
+        # )
 
-        time_to_closest_approach = ObsTerm(
-            func=custom_observations.time_to_closest_approach,
-            params={"num_obstacles": 2, "max_range": 4.0, "horizon_s": 3.0},
-        )
+        # time_to_closest_approach = ObsTerm(
+        #     func=custom_observations.time_to_closest_approach,
+        #     params={"num_obstacles": 2, "max_range": 4.0, "horizon_s": 3.0},
+        # )
 
         # Robot motion
         base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
@@ -402,13 +402,13 @@ class RewardsCfg:
 
     path_velocity = RewTerm(
         func=custom_rewards.path_velocity_reward,
-        weight=3.0,
+        weight=6.0, #3.0,
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
     time = RewTerm(
         func=custom_rewards.time_penalty,
-        weight=-0.03,
+        weight=-0.06, #-0.03,
     )
 
     no_wait = RewTerm(

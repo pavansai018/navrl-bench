@@ -55,6 +55,8 @@ class RLLocalController(Node):
         self.declare_parameter("enable_action_rate_limit", True)
         self.declare_parameter("emergency_stop_scan_m", 0.18)
         self.declare_parameter("enable_motion", False)
+        self.declare_parameter("goal_tolerance_m", 0.08)
+        self.goal_tolerance_m = float(self.get_parameter("goal_tolerance_m").value)
         self.enable_motion = bool(self.get_parameter("enable_motion").value)
 
         self.onnx_path = self.get_parameter("onnx_path").value
@@ -233,6 +235,19 @@ class RLLocalController(Node):
 
         robot_yaw = yaw_from_quat(tf.transform.rotation)
         return robot_xy, robot_yaw
+    
+    def reached_path_end(self, robot_xy: np.ndarray) -> bool:
+        if self.latest_path is None or len(self.latest_path) < 2:
+            return False
+
+        d = np.linalg.norm(self.latest_path - robot_xy[None, :], axis=1)
+        nearest_idx = int(np.argmin(d))
+
+        goal_xy = self.latest_path[-1]
+        dist_to_goal = float(np.linalg.norm(goal_xy - robot_xy))
+
+        # Must be close to final path point AND nearest to final segment.
+        return nearest_idx >= len(self.latest_path) - 2 and dist_to_goal <= self.goal_tolerance_m
 
     def build_observation(self):
         if self.latest_scan is None or self.latest_odom is None or self.latest_path is None:
@@ -292,30 +307,14 @@ class RLLocalController(Node):
         if pose_result is None:
             return
         robot_xy, _ = pose_result
-        # --------------------------------------------------
-        # EXACT IsaacLab final_goal_reached equivalent
-        # --------------------------------------------------
-        if self.latest_path is not None and len(self.latest_path) > 0:
 
-            goal_xy = self.latest_path[-1]
-
-            dist_to_goal = np.linalg.norm(
-                goal_xy - robot_xy
-            )
-            self.get_logger().warn(
-                f"goal={goal_xy}, robot={robot_xy}, dist={dist_to_goal:.3f}"
-            )
-
-            if dist_to_goal < 0.30:
-
-                stop_cmd = Twist()
-
-                self.cmd_pub.publish(stop_cmd)
-
-                self.previous_action[:] = 0.0
-                self.applied_cmd[:] = 0.0
-
-                return
+        if self.reached_path_end(robot_xy):
+            stop_cmd = Twist()
+            self.cmd_pub.publish(stop_cmd)
+            self.previous_action[:] = 0.0
+            self.applied_cmd[:] = 0.0
+            return
+        
         raw_action = self.session.run(
             [self.output_name],
             {self.input_name: obs.reshape(1, -1)},

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import math
-
+import os
 import torch
 from .path_dataset import Nav2PathDataset
 from .nav2_map import Nav2OccupancyMap
 from isaaclab.managers import SceneEntityCfg
 from .observations import map_collision_direction_flags
+from . import config
 
 def _ensure_nav2_path_buffers(env, max_path_points: int = 600):
     device = env.device
@@ -336,23 +337,7 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
         if vc < 12 or obstacle_level <= 0:
             continue
 
-        modes = []
-        if obstacle_level >= 1: modes.append("side_stationary_tiny")
-        if obstacle_level >= 2: modes.append("side_stationary_small")
-        if obstacle_level >= 3: modes.append("center_stationary_tiny")
-        if obstacle_level >= 4: modes.append("center_stationary_small")
-        if obstacle_level >= 5: modes.append("center_stationary_medium")
-        if obstacle_level >= 6: modes.append("slow_crossing_far")
-        if obstacle_level >= 7: modes.append("slow_crossing_near")
-        if obstacle_level >= 8: modes.append("medium_crossing_far")
-        if obstacle_level >= 9: modes.append("medium_crossing_near")
-        if obstacle_level >= 10: modes.append("fast_crossing_far")
-        if obstacle_level >= 11: modes.append("same_lane_slow")
-        if obstacle_level >= 12: modes.append("same_lane_medium")
-        if obstacle_level >= 13: modes.append("reverse_same_lane_slow")
-        if obstacle_level >= 14: modes.append("center_stationary_large")
-        if obstacle_level >= 15: modes.append("two_crossing_combo")
-
+        modes = config.obstacle_stages[:obstacle_level]
         modes = modes[:num_obs]
 
         start_idx = max(5, int(0.10 * vc))
@@ -798,6 +783,12 @@ def _ensure_domain_randomization_buffers(env):
 
     if not hasattr(env, "dr_com_shift_norm"):
         env.dr_com_shift_norm = torch.zeros(env.num_envs, device=device)
+    
+    if not hasattr(env, "wheel_slip_scale"):
+        env.wheel_slip_scale = torch.ones(env.num_envs, 4, device=device)
+
+    if not hasattr(env, "wheel_radius_scale"):
+        env.wheel_radius_scale = torch.ones(env.num_envs, 4, device=device)
 
 def update_performance_curriculum_on_reset(env, env_ids: torch.Tensor):
     _ensure_performance_curriculum_buffers(env)
@@ -886,11 +877,7 @@ def reset_domain_randomization(env, env_ids: torch.Tensor, asset_cfg: SceneEntit
         raw_level = int(level[i].item())
         _, dr_level_i = get_curriculum_sublevels(env, raw_level)
         dr_levels[i] = dr_level_i
-    # --------------------------------------------------
-    # Rule:
-    # Levels 0–15  : NO domain randomization.
-    # Levels 16+   : Start DR one difficulty at a time.
-    # --------------------------------------------------
+
     dr_mask = dr_levels > 0
     # Defaults: no DR
     env.dr_lidar_rays[env_ids] = int(getattr(env.cfg, "lidar_level_0_rays", 72))
@@ -900,68 +887,78 @@ def reset_domain_randomization(env, env_ids: torch.Tensor, asset_cfg: SceneEntit
     env.action_delay_steps[env_ids] = 0
     env.dr_mass_scale[env_ids] = 1.0
     env.dr_com_shift_norm[env_ids] = 0.0
+    env.wheel_slip_scale[env_ids] = 1.0
+    env.wheel_radius_scale[env_ids] = 1.0
 
     if not torch.any(dr_mask):
         return
 
     ids = env_ids[dr_mask]
-    ids = env_ids[dr_mask]
-    dr_level = torch.clamp(dr_levels[dr_mask] - 1, min=0, max=7)
+    active_levels = dr_levels[dr_mask]
+    stages = config.domain_randomization_stages
+
     # --------------------------------------------------
-    # DR curriculum after obstacle curriculum:
-    #
-    # Level 16: increase lidar rays only
-    # Level 17: add scan noise only
-    # Level 18: add scan dropout only
-    # Level 19: add action delay only
-    # Level 20: add motor strength variation only
-    # Level 21: add mass variation only
-    # Level 22: add COM shift only
-    # Level 23+: combine all stronger DR
+    # YAML-name-based cumulative DR.
+    # If dr_level = 3, first 3 YAML stages are active.
+    # No fixed 8/10-length table indexing.
     # --------------------------------------------------
+    for local_i, env_id_t in enumerate(ids):
+        env_id = int(env_id_t.item())
+        dr_level = int(active_levels[local_i].item())
+        active_dr = set(stages[:dr_level])
 
-    noise_max = torch.tensor([0.0, 0.005, 0.005, 0.005, 0.005, 0.005, 0.005, 0.010], device=env.device)[dr_level]
-    dropout_max = torch.tensor([0.0, 0.0, 0.01, 0.01, 0.01, 0.01, 0.01, 0.02], device=env.device)[dr_level]
-    motor_min = torch.tensor([1.0, 1.0, 1.0, 0.95, 0.95, 0.95, 0.95, 0.90], device=env.device)[dr_level]
-    delay_max = torch.tensor([0, 0, 0, 0, 1, 1, 1, 2], dtype=torch.long, device=env.device)[dr_level]
-    mass_min = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 0.95, 0.95, 0.90], device=env.device)[dr_level]
-    mass_max = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.05, 1.05, 1.10], device=env.device)[dr_level]
-    com_max = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.005, 0.010], device=env.device)[dr_level]
+        if "lidar_rays" in active_dr:
+            choices = torch.tensor([72, 96, 120, 144], dtype=torch.long, device=env.device)
+            pick = torch.randint(0, choices.numel(), (1,), device=env.device)
+            env.dr_lidar_rays[env_id] = choices[pick]
 
+        if "scan_noise" in active_dr:
+            env.dr_scan_noise_std[env_id] = torch.rand((), device=env.device) * 0.005
 
-    # LiDAR ray count randomization starts at level 16 and remains active.
-    choices = torch.tensor([72, 96, 120, 144], dtype=torch.long, device=env.device)
-    pick = torch.randint(0, choices.numel(), (len(ids),), device=env.device)
-    env.dr_lidar_rays[ids] = choices[pick]
+        if "scan_dropout" in active_dr:
+            env.dr_scan_dropout_prob[env_id] = torch.rand((), device=env.device) * 0.01
 
-    # Scan noise: random [0, noise_max]
-    env.dr_scan_noise_std[ids] = torch.rand(len(ids), device=env.device) * noise_max
+        if "action_delay" in active_dr:
+            env.action_delay_steps[env_id] = torch.randint(0, 2, (1,), device=env.device)
 
-    # Dropout: random [0, dropout_max]
-    env.dr_scan_dropout_prob[ids] = torch.rand(len(ids), device=env.device) * dropout_max
+        if "motor_strength" in active_dr:
+            env.motor_strength_scale[env_id] = 0.90 + torch.rand((), device=env.device) * 0.10
 
-    # Motor strength: random [motor_min, 1.0]
-    env.motor_strength_scale[ids] = motor_min + torch.rand(len(ids), device=env.device) * (1.0 - motor_min)
+        if "mass" in active_dr:
+            env.dr_mass_scale[env_id] = 0.90 + torch.rand((), device=env.device) * 0.20
 
-    # Action delay: random integer [0, delay_max]
-    delay_rand = torch.rand(len(ids), device=env.device)
-    env.action_delay_steps[ids] = torch.floor(delay_rand * (delay_max.float() + 1.0)).long()
+        if "com_shift" in active_dr:
+            com_max = 0.010
+            shift_x = (torch.rand((), device=env.device) * 2.0 - 1.0) * com_max
+            shift_y = (torch.rand((), device=env.device) * 2.0 - 1.0) * com_max
+            shift_z = (
+                (torch.rand((), device=env.device) * 2.0 - 1.0)
+                * float(getattr(env.cfg, "com_z_m", 0.005))
+            )
 
-    # Mass scale: random [mass_min, mass_max]
-    env.dr_mass_scale[ids] = mass_min + torch.rand(len(ids), device=env.device) * (mass_max - mass_min)
+            env.dr_com_shift_norm[env_id] = torch.sqrt(
+                shift_x * shift_x + shift_y * shift_y + shift_z * shift_z
+            )
 
-    # COM shift: random within [-com_max, +com_max]
-    shift_x = (torch.rand(len(ids), device=env.device) * 2.0 - 1.0) * com_max
-    shift_y = (torch.rand(len(ids), device=env.device) * 2.0 - 1.0) * com_max
-    shift_z = (
-        (torch.rand(len(ids), device=env.device) * 2.0 - 1.0)
-        * float(getattr(env.cfg, "com_z_m", 0.005))
-        * (com_max > 0.0).float()
-    )
+        if "wheel_radius" in active_dr:
+            env.wheel_radius_scale[env_id] = (
+                0.90 + torch.rand(4, device=env.device) * 0.20
+            )
 
-    env.dr_com_shift_norm[ids] = torch.sqrt(
-        shift_x * shift_x + shift_y * shift_y + shift_z * shift_z
-    )
+        if "wheel_slip" in active_dr:
+            env.wheel_slip_scale[env_id] = (
+                0.50 + torch.rand(4, device=env.device) * 0.50
+            )
+
+        if "combined_strong" in active_dr:
+            env.dr_scan_noise_std[env_id] = torch.rand((), device=env.device) * 0.010
+            env.dr_scan_dropout_prob[env_id] = torch.rand((), device=env.device) * 0.02
+            env.motor_strength_scale[env_id] = 0.80 + torch.rand((), device=env.device) * 0.20
+            env.action_delay_steps[env_id] = torch.randint(0, 3, (1,), device=env.device)
+            env.dr_mass_scale[env_id] = 0.90 + torch.rand((), device=env.device) * 0.20
+            env.wheel_radius_scale[env_id] = 0.90 + torch.rand(4, device=env.device) * 0.20
+            env.wheel_slip_scale[env_id] = 0.50 + torch.rand(4, device=env.device) * 0.50
+
     # Apply mass randomization to PhysX if available.
     if asset_cfg is not None:
         robot = env.scene[asset_cfg.name]
@@ -975,7 +972,6 @@ def reset_domain_randomization(env, env_ids: torch.Tensor, asset_cfg: SceneEntit
                 robot.root_physx_view.set_masses(masses, ids)
             except Exception:
                 pass
-
 
 def randomize_robot_mass_com(env, env_ids: torch.Tensor, asset_cfg: SceneEntityCfg):
     robot = env.scene[asset_cfg.name]
@@ -1034,24 +1030,29 @@ def randomize_robot_mass_com(env, env_ids: torch.Tensor, asset_cfg: SceneEntityC
     robot.root_physx_view.set_masses(masses, env_ids)
     robot.root_physx_view.set_coms(coms, env_ids)
 
+def get_num_obstacle_levels() -> int:
+    return len(config.obstacle_stages)
+
+
+def get_num_dr_levels() -> int:
+    return len(config.domain_randomization_stages)
+
+
 def get_curriculum_sublevels(env, raw_level: int) -> tuple[int, int]:
     order = str(getattr(env.cfg, "curriculum_order", "obstacles_first"))
 
-    if order == "dr_first":
-        if raw_level <= 8:
-            dr_level = raw_level
-            obstacle_level = 0
-        else:
-            dr_level = 8
-            obstacle_level = min(raw_level - 8, 15)
+    num_obstacle_levels = get_num_obstacle_levels()
+    num_dr_levels = get_num_dr_levels()
 
+    if order == "dr_first":
+        dr_level = min(raw_level, num_dr_levels)
+        obstacle_level = max(0, min(raw_level - num_dr_levels, num_obstacle_levels))
+    elif order == 'mixed':
+        obstacle_level = min(raw_level, num_obstacle_levels)
+        dr_level = min(raw_level // 2, num_dr_levels)
     else:
-        if raw_level <= 15:
-            obstacle_level = raw_level
-            dr_level = 0
-        else:
-            obstacle_level = 15
-            dr_level = min(raw_level - 15, 8)
+        obstacle_level = min(raw_level, num_obstacle_levels)
+        dr_level = max(0, min(raw_level - num_obstacle_levels, num_dr_levels))
 
     return obstacle_level, dr_level
 

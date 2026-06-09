@@ -23,6 +23,7 @@ from dynamic_obstacle_avoidance.tasks.manager_based.dynamic_obstacle_avoidance.m
 from dynamic_obstacle_avoidance.tasks.manager_based.dynamic_obstacle_avoidance.mdp import events as custom_events
 from dynamic_obstacle_avoidance.tasks.manager_based.dynamic_obstacle_avoidance.mdp import terminations as custom_terminations
 from dynamic_obstacle_avoidance.tasks.manager_based.dynamic_obstacle_avoidance.mdp import observations as custom_observations
+from dynamic_obstacle_avoidance.tasks.manager_based.dynamic_obstacle_avoidance.mdp import config as config
 
 ##
 # Pre-defined configs
@@ -101,21 +102,16 @@ class ActionsCfg:
 
     base_velocity = custom_actions.KinematicMecanumActionCfg(
         asset_name="robot",
-        wheel_joint_names=[
-            "lwheel1_Joint",
-            "lwheel2_Joint",
-            "rwheel1_Joint",
-            "rwheel2_Joint",
-        ],
-        wheel_radius=0.035,
-        wheel_base_x=0.0795,
-        wheel_base_y=0.09775,
-        max_vx=0.75,
-        max_vy=0.75,
-        max_wz=2.0,
-        max_delta_vx=0.04,
-        max_delta_vy=0.04,
-        max_delta_wz=0.12,
+        wheel_joint_names=config.ACTIONS['wheel_joint_names'],
+        wheel_radius=config.ACTIONS['wheel_radius'],
+        wheel_base_x=config.ACTIONS['wheel_base_x'],
+        wheel_base_y=config.ACTIONS['wheel_base_y'],
+        max_vx=config.ACTIONS['max_vx'],
+        max_vy=config.ACTIONS['max_vy'],
+        max_wz=config.ACTIONS['max_wz'],
+        max_delta_vx=config.ACTIONS['max_delta_vx'],
+        max_delta_vy=config.ACTIONS['max_delta_vy'],
+        max_delta_wz=config.ACTIONS['max_delta_wz'],
     )
 
 @configclass
@@ -129,10 +125,7 @@ class ObservationsCfg:
         """
         local_path_window = ObsTerm(
             func=custom_observations.local_path_window,
-            params={
-                'num_points': 8,
-                'step': 8,
-            },
+            params=config.OBSERVATIONS['actor']['local_path_window']['params']
         )
 
         nav2_heading_error = ObsTerm(
@@ -143,22 +136,22 @@ class ObservationsCfg:
         )
         combined_scan = ObsTerm(
             func=custom_observations.combined_static_dynamic_scan,
-            params={"num_rays": 144, "max_range": 4.0, "step_size": 0.10},
+            params=config.OBSERVATIONS['actor']['combined_scan']['params'],
         )
 
         # dynamic_obstacles = ObsTerm(
         #     func=custom_observations.dynamic_obstacle_states,
-        #     params={"num_obstacles": 4, "max_range": 4.0},
+        #     params=config.OBSERVATIONS['actor']['dynamic_obstacles']['params'],
         # )
 
         # path_blocked = ObsTerm(
         #     func=custom_observations.dynamic_path_blockage,
-        #     params={"lookahead_points": 32, "path_radius": 0.35},
+        #     params=config.OBSERVATIONS['actor']['path_blocked']['params'],
         # )
 
         # time_to_closest_approach = ObsTerm(
         #     func=custom_observations.time_to_closest_approach,
-        #     params={"num_obstacles": 2, "max_range": 4.0, "horizon_s": 3.0},
+        #     params=config.OBSERVATIONS['actor']['time_to_closest_approach']['params'],
         # )
 
         # Robot motion
@@ -175,10 +168,7 @@ class ObservationsCfg:
     class CriticCfg(ObsGroup):
         local_path_window = ObsTerm(
             func=custom_observations.local_path_window,
-            params={
-                'num_points': 8,
-                'step': 8,
-            },
+            params=config.OBSERVATIONS['critic']['local_path_window']['params']
         )
 
         nav2_heading_error = ObsTerm(
@@ -190,20 +180,20 @@ class ObservationsCfg:
 
         combined_scan = ObsTerm(
             func=custom_observations.combined_static_dynamic_scan,
-            params={"num_rays": 144, "max_range": 4.0, "step_size": 0.10},
+            params=config.OBSERVATIONS['critic']['combined_scan']['params'],
         )
         dynamic_obstacles = ObsTerm(
             func=custom_observations.dynamic_obstacle_states,
-            params={"num_obstacles": 4, "max_range": 4.0},
+            params=config.OBSERVATIONS['critic']['dynamic_obstacles']['params'],
         )
         path_blocked = ObsTerm(
             func=custom_observations.dynamic_path_blockage,
-            params={"lookahead_points": 32, "path_radius": 0.35},
+            params=config.OBSERVATIONS['critic']['path_blocked']['params'],
         )
 
         time_to_closest_approach = ObsTerm(
             func=custom_observations.time_to_closest_approach,
-            params={"num_obstacles": 2, "max_range": 4.0, "horizon_s": 3.0},
+            params=config.OBSERVATIONS['critic']['time_to_closest_approach']['params'],
         )
 
         base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
@@ -235,7 +225,7 @@ class EventCfg:
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "final_goal_marker_cfg": SceneEntityCfg("final_goal_marker"),
-            "max_path_points": 600,
+            "max_path_points": config.EVENTS['reset_nav2_path']['max_path_points'],
         },
     )
 
@@ -244,14 +234,14 @@ class EventCfg:
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "max_path_points": 600,
+            "max_path_points": config.EVENTS['reset_dynamic_obstacles']['max_path_points'],
         },
     )
 
     update_dynamic_obstacles = EventTerm(
         func=custom_events.update_dynamic_obstacles_tensor,
         mode="interval",
-        interval_range_s=(0.03, 0.03),
+        interval_range_s=config.EVENTS['update_dynamic_obstacles']['interval_range_s'],
     )
 
     draw_nav2_debug = EventTerm(
@@ -259,14 +249,14 @@ class EventCfg:
         mode="interval",
         interval_range_s=(0.03, 0.030),
         params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "map_stride": 2,
-            "max_map_points": 6000,
-            "path_stride": 4,
-            "num_rays": 72,
-            "max_range": 4.0,
-            "step_size": 0.05,
-        },
+            "asset_cfg": SceneEntityCfg("robot"), 
+            'map_stride': config.EVENTS['draw_nav2_debug']['params']['map_stride'],
+            "max_map_points": config.EVENTS['draw_nav2_debug']['params']['max_map_points'],
+            "path_stride": config.EVENTS['draw_nav2_debug']['params']['path_stride'],
+            "num_rays": config.EVENTS['draw_nav2_debug']['params']['num_rays'],
+            "max_range": config.EVENTS['draw_nav2_debug']['params']['max_range'],
+            "step_size": config.EVENTS['draw_nav2_debug']['params']['step_size'],
+        }
     )
 
     reset_stuck_buffers = EventTerm(
@@ -289,13 +279,13 @@ class EventCfg:
     log_curriculum_progress = EventTerm(
         func=custom_events.log_curriculum_progress,
         mode="interval",
-        interval_range_s=(1.0, 1.0),
+        interval_range_s=config.EVENTS['log_curriculum_progress']['interval_range_s'],
     )
 
     log_map_collision_directions = EventTerm(
         func=custom_events.log_map_collision_directions,
         mode="interval",
-        interval_range_s=(1.0, 1.0),
+        interval_range_s=config.EVENTS['log_map_collision_directions']['interval_range_s'],
     )
 
 @configclass
@@ -308,64 +298,64 @@ class RewardsCfg:
     """
     progress = RewTerm(
         func=custom_rewards.progress_along_nav2_path,
-        weight=35.0,
+        weight=config.REWARDS['progress']['weight'],
         params={
             'asset_cfg': SceneEntityCfg('robot'),
-            'max_step_progress': 0.05,
+            'max_step_progress': config.REWARDS['progress']['max_step_progress'],
         },
     )
     goal_approach = RewTerm(
         func=custom_rewards.goal_approach_reward,
-        weight=15.0,
-        params={"asset_cfg": SceneEntityCfg("robot"), "max_step_progress": 0.08},
+        weight=config.REWARDS['goal_approach']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "max_step_progress": config.REWARDS['goal_approach']['max_step_progress']},
     )
 
     cross_track = RewTerm(
         func=custom_rewards.nav2_cross_track_penalty,
-        weight=-1.5,
+        weight=config.REWARDS['cross_track']['weight'],
         params={
             'asset_cfg': SceneEntityCfg('robot'),
-            'max_error': 1.0,
+            'max_error': config.REWARDS['cross_track']['max_error'],
         },
     )
 
     path_rejoin = RewTerm(
         func=custom_rewards.path_rejoin_reward,
-        weight=5.0,
-        params={"asset_cfg": SceneEntityCfg("robot"), "active_threshold": 0.20},
+        weight=config.REWARDS['path_rejoin']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "active_threshold": config.REWARDS['path_rejoin']['active_threshold']},
     )
 
 
     heading_alignment = RewTerm(
         func=custom_rewards.nav2_heading_alignment_reward,
-        weight=1.5,
+        weight=config.REWARDS['heading_alignment']['weight'],#1.5,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
-            'lookahead_index_offset': 4,
+            'lookahead_index_offset': config.REWARDS['heading_alignment']['lookahead_index_offset'],
         },
     )
 
     dynamic_collision = RewTerm(
         func=custom_rewards.dynamic_obstacle_collision_penalty,
-        weight=-100.0,
-        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22},
+        weight=config.REWARDS['dynamic_collision']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.REWARDS['dynamic_collision']['robot_radius']},
     )
 
     dynamic_clearance = RewTerm(
         func=custom_rewards.dynamic_obstacle_clearance_penalty,
-        weight=-5.0,
-        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22, "clearance": 0.25},
+        weight=config.REWARDS['dynamic_clearance']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.REWARDS['dynamic_clearance']['robot_radius'], "clearance": config.REWARDS['dynamic_clearance']['clearance']},
     )
 
     dynamic_ttc = RewTerm(
         func=custom_rewards.dynamic_time_to_collision_penalty,
-        weight=-1.0,
-        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22, "horizon_s": 1.0},
+        weight=config.REWARDS['dynamic_ttc']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.REWARDS['dynamic_ttc']['robot_radius'], "horizon_s": config.REWARDS['dynamic_ttc']['horizon_s']},
     )
 
     lateral_oscillation = RewTerm(
         func=custom_rewards.lateral_oscillation_penalty,
-        weight=-0.20,
+        weight=config.REWARDS['lateral_oscillation']['weight'], #-0.20,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
         },
@@ -374,59 +364,59 @@ class RewardsCfg:
 
     map_collision = RewTerm(
         func=custom_rewards.map_collision_penalty,
-        weight=-150.0,
+        weight=config.REWARDS['map_collision']['weight'],
         params={
             'asset_cfg': SceneEntityCfg('robot'),
-            'radius': 0.22,
+            'radius': config.REWARDS['map_collision']['radius'],
         },
     )
 
     final_goal = RewTerm(
         func=custom_rewards.final_goal_reward,
-        weight=120.0,
+        weight=config.REWARDS['final_goal']['weight'],
         params={
             'asset_cfg': SceneEntityCfg('robot'),
-            'threshold': 0.30,
+            'threshold': config.REWARDS['final_goal']['threshold'],
         },
     )
 
     action_smoothness = RewTerm(
         func=custom_rewards.action_smoothness_penalty,
-        weight=-0.06,
+        weight=config.REWARDS['action_smoothness']['weight'],
     )
 
     yaw_rate = RewTerm(
         func=custom_rewards.yaw_rate_penalty,
-        weight=-0.02,
+        weight=config.REWARDS['yaw_rate']['weight'], #-0.02,
     )
 
     path_velocity = RewTerm(
         func=custom_rewards.path_velocity_reward,
-        weight=6.0, #3.0,
+        weight=config.REWARDS['path_velocity']['weight'], #3.0,
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
     time = RewTerm(
         func=custom_rewards.time_penalty,
-        weight=-0.06, #-0.03,
+        weight=config.REWARDS['time']['weight'], #-0.03,
     )
 
     no_wait = RewTerm(
         func=custom_rewards.no_wait_penalty,
-        weight=-5.0,
-        params={"asset_cfg": SceneEntityCfg("robot"), "speed_threshold": 0.10},
+        weight=config.REWARDS['no_wait']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "speed_threshold": config.REWARDS['no_wait']['speed_threshold']},
     )
 
     # static_velocity_clearance = RewTerm(
     #     func=custom_rewards.static_velocity_clearance_penalty,
-    #     weight=-5.0,
+    #     weight=config.REWARDS['static_velocity_clearance']['weight],
     #     params={
     #         "asset_cfg": SceneEntityCfg("robot"),
-    #         "safe_distance": 0.30,
-    #         "max_range": 4.0,
-    #         "num_rays": 144,
-    #         "sector_half_angle_rad": 0.785398,
-    #         "min_speed": 0.05,
+    #         "safe_distance": config.REWARDS['static_velocity_clearance']['safe_distance'],
+    #         "max_range": config.REWARDS['static_velocity_clearance']['max_range'],
+    #         "num_rays": config.REWARDS['static_velocity_clearance']['num_rays'],
+    #         "sector_half_angle_rad": config.REWARDS['static_velocity_clearance']['sector_half_angle_rad'],
+    #         "min_speed": config.REWARDS['static_velocity_clearance']['min_speed'],
     #     },
     # )
 
@@ -442,7 +432,7 @@ class TerminationsCfg:
         func=custom_terminations.final_goal_reached,
         params={
             'asset_cfg': SceneEntityCfg('robot'),
-            'threshold': 0.30,
+            'threshold': config.TERMINATIONS['final_goal_reached']['threshold'],
         },
     )
 
@@ -450,22 +440,22 @@ class TerminationsCfg:
         func=custom_terminations.map_collision_termination,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "radius": 0.22,
+            "radius": config.TERMINATIONS['map_collision']['radius'],
         },
     )
 
     dynamic_collision = DoneTerm(
         func=custom_terminations.dynamic_obstacle_collision_termination,
-        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": 0.22},
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.TERMINATIONS['dynamic_collision']['robot_radius']},
     )
 
     stuck = DoneTerm(
         func=custom_terminations.stuck_termination,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "speed_threshold": 0.02,
-            "time_window_s": 2.0,
-            "grace_period_s": 2.0,
+            "speed_threshold": config.TERMINATIONS['stuck']['speed_threshold'],
+            "time_window_s": config.TERMINATIONS['stuck']['time_window_s'],
+            "grace_period_s": config.TERMINATIONS['stuck']['grace_period_s'],
         },
     )
 
@@ -485,8 +475,8 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
-    nav2_path_dataset_dir: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/nav_rl_bridge/rl_path_dataset/aws_warehouse"
-    nav2_map_yaml_path: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/m3_ros2/maps/no_roof_warehouse.yaml"
+    nav2_path_dataset_dir: str = config.nav2_path_dataset_dir
+    nav2_map_yaml_path: str = config.nav2_map_yaml_path
 
     # Tensor dynamic obstacle/curriculum configuration.
     max_dynamic_obstacles: int = 6
@@ -561,8 +551,8 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     com_level_3_xy_m: float = 0.020
     com_z_m: float = 0.005
 
-    # curriculum_resets_per_level: int = 200
-    curriculum_max_level: int = 23
+
+    curriculum_max_level: int = 20 #len(custom_events.read_config()['domain_randomization_stages'] + custom_events.read_config()['obstacle_stages'])
     fixed_curriculum_level: int = -1
     curriculum_perf_window: int = 1000
     curriculum_min_samples: int = 500

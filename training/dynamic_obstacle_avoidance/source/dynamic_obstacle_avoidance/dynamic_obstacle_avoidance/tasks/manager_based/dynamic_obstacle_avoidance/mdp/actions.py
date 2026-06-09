@@ -267,6 +267,47 @@ class KinematicMecanumAction(ActionTerm):
         vy = self._processed_actions[:, 1]
         wz = self._processed_actions[:, 2]
 
+        if hasattr(self._env, "wheel_slip_scale"):
+            slip = self._env.wheel_slip_scale  # [num_envs, 4]
+
+            # Convert 4 wheel slip values into effective chassis degradation.
+            # Mecanum lateral motion is more sensitive to wheel slip.
+            vx_slip = slip.mean(dim=1)
+            vy_slip = slip.mean(dim=1)
+
+            # Yaw depends on left/right imbalance.
+            left_slip = 0.5 * (slip[:, 0] + slip[:, 1])
+            right_slip = 0.5 * (slip[:, 2] + slip[:, 3])
+            wz_slip = 0.5 * (left_slip + right_slip)
+
+            vx = vx * vx_slip
+            vy = vy * vy_slip
+            wz = wz * wz_slip
+
+            # Wheel imbalance creates unwanted yaw drift.
+            yaw_coupling = (right_slip - left_slip) * 0.3
+            wz = wz + yaw_coupling * torch.abs(vx)
+
+        if hasattr(self._env, "wheel_radius_scale"):
+            radius_scale = self._env.wheel_radius_scale  # [num_envs, 4]
+
+            # Effective wheel-radius/gain mismatch.
+            radius_mean = radius_scale.mean(dim=1)
+
+            left_radius = 0.5 * (radius_scale[:, 0] + radius_scale[:, 1])
+            right_radius = 0.5 * (radius_scale[:, 2] + radius_scale[:, 3])
+
+            vx = vx * radius_mean
+            vy = vy * radius_mean
+
+            # Left/right radius mismatch causes heading drift.
+            radius_yaw_bias = (right_radius - left_radius) * 0.4
+            wz = wz + radius_yaw_bias * torch.abs(vx)
+
+        self._processed_actions[:, 0] = vx
+        self._processed_actions[:, 1] = vy
+        self._processed_actions[:, 2] = wz
+
         r = self.cfg.wheel_radius
         l = self.cfg.wheel_base_x + self.cfg.wheel_base_y
 

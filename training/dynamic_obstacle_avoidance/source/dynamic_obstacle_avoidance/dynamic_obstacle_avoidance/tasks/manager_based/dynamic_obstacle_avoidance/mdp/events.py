@@ -840,7 +840,16 @@ def update_performance_curriculum_on_reset(env, env_ids: torch.Tensor):
         or timeout_rate > float(getattr(env.cfg, "curriculum_timeout_demote", 0.50))
     )
 
-    max_level = int(getattr(env.cfg, "curriculum_max_level", 5))
+    # max_level = int(getattr(env.cfg, "curriculum_max_level", 5))
+    max_level = int(getattr(env.cfg, "curriculum_max_level", -1))
+    if max_level < 0:
+        raw = 0
+        while True:
+            obs_level, dr_level = get_curriculum_sublevels(env, raw)
+            if obs_level >= get_num_obstacle_levels() and dr_level >= get_num_dr_levels():
+                max_level = raw
+                break
+            raw += 1
 
     if promote:
         env.navrl_curriculum_level_global = min(env.navrl_curriculum_level_global + 1, max_level)

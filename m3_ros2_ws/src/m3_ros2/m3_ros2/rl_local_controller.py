@@ -30,7 +30,7 @@ class RLLocalController(Node):
 
         pkg_share = get_package_share_directory("m3_ros2")
 
-        self.declare_parameter("onnx_path", os.path.join(pkg_share, "rl_policies", "policy.onnx"))
+        self.declare_parameter("onnx_path", os.path.join(pkg_share, "rl_policies", "policy_63600.onnx"))
         self.declare_parameter("scan_topic", "/scan")
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("path_topic", "/plan")
@@ -47,15 +47,23 @@ class RLLocalController(Node):
         self.declare_parameter("max_vx", 0.75)
         self.declare_parameter("max_vy", 0.75)
         self.declare_parameter("max_wz", 2.0)
-        self.declare_parameter("max_delta_vx", 0.04)
-        self.declare_parameter("max_delta_vy", 0.04)
-        self.declare_parameter("max_delta_wz", 0.12)
+        self.declare_parameter("max_delta_vx", 0.025)
+        self.declare_parameter("max_delta_vy", 0.025)
+        self.declare_parameter("max_delta_wz", 0.08)
         self.declare_parameter("control_rate_hz", 30.0)
 
         self.declare_parameter("enable_action_rate_limit", True)
         self.declare_parameter("emergency_stop_scan_m", 0.18)
         self.declare_parameter("enable_motion", False)
         self.declare_parameter("goal_tolerance_m", 0.08)
+        self.declare_parameter("goal_slowdown_m", 0.50)
+        self.declare_parameter("goal_stop_m", 0.05)
+        self.declare_parameter("debug_log_period_s", 2.0)
+        self.debug_log_period_s = float(self.get_parameter("debug_log_period_s").value)
+        self.last_debug_log_time = self.get_clock().now()
+
+        self.goal_slowdown_m = float(self.get_parameter("goal_slowdown_m").value)
+        self.goal_stop_m = float(self.get_parameter("goal_stop_m").value)
         self.goal_tolerance_m = float(self.get_parameter("goal_tolerance_m").value)
         self.enable_motion = bool(self.get_parameter("enable_motion").value)
 
@@ -236,18 +244,26 @@ class RLLocalController(Node):
         robot_yaw = yaw_from_quat(tf.transform.rotation)
         return robot_xy, robot_yaw
     
+    # def reached_path_end(self, robot_xy: np.ndarray) -> bool:
+    #     if self.latest_path is None or len(self.latest_path) < 2:
+    #         return False
+
+    #     d = np.linalg.norm(self.latest_path - robot_xy[None, :], axis=1)
+    #     nearest_idx = int(np.argmin(d))
+
+    #     goal_xy = self.latest_path[-1]
+    #     dist_to_goal = float(np.linalg.norm(goal_xy - robot_xy))
+
+    #     # Must be close to final path point AND nearest to final segment.
+    #     return nearest_idx >= len(self.latest_path) - 2 and dist_to_goal <= self.goal_tolerance_m
     def reached_path_end(self, robot_xy: np.ndarray) -> bool:
         if self.latest_path is None or len(self.latest_path) < 2:
             return False
 
-        d = np.linalg.norm(self.latest_path - robot_xy[None, :], axis=1)
-        nearest_idx = int(np.argmin(d))
-
         goal_xy = self.latest_path[-1]
         dist_to_goal = float(np.linalg.norm(goal_xy - robot_xy))
 
-        # Must be close to final path point AND nearest to final segment.
-        return nearest_idx >= len(self.latest_path) - 2 and dist_to_goal <= self.goal_tolerance_m
+        return dist_to_goal <= self.goal_stop_m
 
     def build_observation(self):
         if self.latest_scan is None or self.latest_odom is None or self.latest_path is None:
@@ -307,7 +323,10 @@ class RLLocalController(Node):
         if pose_result is None:
             return
         robot_xy, _ = pose_result
-
+        goal_dist = float("nan")
+        if self.latest_path is not None and len(self.latest_path) >= 2:
+            goal_xy = self.latest_path[-1]
+            goal_dist = float(np.linalg.norm(goal_xy - robot_xy))
         if self.reached_path_end(robot_xy):
             stop_cmd = Twist()
             self.cmd_pub.publish(stop_cmd)
@@ -331,6 +350,12 @@ class RLLocalController(Node):
             ],
             dtype=np.float32,
         )
+        goal_xy = self.latest_path[-1]
+        goal_dist = float(np.linalg.norm(goal_xy - robot_xy))
+
+        if goal_dist < self.goal_slowdown_m:
+            scale = max(0.15, goal_dist / self.goal_slowdown_m)
+            target_cmd *= scale
 
         if self.enable_action_rate_limit:
             delta = np.clip(target_cmd - self.applied_cmd, -self.max_delta, self.max_delta)
@@ -369,6 +394,15 @@ class RLLocalController(Node):
         #         f"cmd=[{cmd.linear.x:+.3f}, {cmd.linear.y:+.3f}, {cmd.angular.z:+.3f}], "
         #         f"prev=[{self.previous_action[0]:+.3f}, {self.previous_action[1]:+.3f}, {self.previous_action[2]:+.3f}]"
         #     )
+        now = self.get_clock().now()
+        elapsed = (now - self.last_debug_log_time).nanoseconds * 1e-9
+
+        if elapsed >= self.debug_log_period_s:
+            self.get_logger().info(
+                f"goal_dist={goal_dist:.3f}, "
+                f"cmd=[{cmd.linear.x:+.3f}, {cmd.linear.y:+.3f}, {cmd.angular.z:+.3f}]"
+            )
+            self.last_debug_log_time = now
 
 
 def main():

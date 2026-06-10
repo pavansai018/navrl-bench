@@ -329,3 +329,19 @@ def static_velocity_clearance_penalty(
     penalty = (safe_distance - move_dir_clearance) / safe_distance
 
     return torch.clamp(penalty, 0.0, 1.0)
+
+def start_speed_penalty(env, asset_cfg: SceneEntityCfg, warmup_s: float = 2.0):
+    robot = env.scene[asset_cfg.name]
+    step_dt = float(getattr(env, "step_dt", 1.0 / 30.0))
+
+    if not hasattr(env, "episode_step_count"):
+        return torch.zeros(env.num_envs, device=env.device)
+
+    t = env.episode_step_count.float() * step_dt
+    active = t < warmup_s
+
+    vx = robot.data.root_lin_vel_b[:, 0]
+    vy = robot.data.root_lin_vel_b[:, 1]
+    speed = torch.sqrt(vx * vx + vy * vy)
+
+    return torch.where(active, speed, torch.zeros_like(speed))

@@ -308,7 +308,7 @@ class RLLocalController(Node):
             self.get_logger().error(
                 f"Observation dim mismatch: built={obs.shape[0]}, "
                 f"policy_expected={self.expected_obs_dim}. "
-                "New policy should expect 168. If it expects 197, you exported old policy."
+                "New policy should expect 168."
             )
             return None
 

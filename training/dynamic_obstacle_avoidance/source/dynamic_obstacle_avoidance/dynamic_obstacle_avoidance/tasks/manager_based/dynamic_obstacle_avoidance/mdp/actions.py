@@ -447,3 +447,6 @@ class KinematicMecanumActionCfg(ActionTermCfg):
     max_delta_vx: float = 0.04
     max_delta_vy: float = 0.04
     max_delta_wz: float = 0.12
+    enable_static_action_shield: bool = True
+    shield_robot_radius: float = 0.22
+    shield_num_points: int = 16

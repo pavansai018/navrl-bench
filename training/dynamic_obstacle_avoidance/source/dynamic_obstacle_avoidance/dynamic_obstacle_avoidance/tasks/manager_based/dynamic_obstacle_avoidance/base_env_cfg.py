@@ -419,6 +419,14 @@ class RewardsCfg:
     #         "min_speed": config.REWARDS['static_velocity_clearance']['min_speed'],
     #     },
     # )
+    start_speed = RewTerm(
+        func=custom_rewards.start_speed_penalty,
+        weight=config.REWARDS['start_speed']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "warmup_s": config.REWARDS['start_speed']['warmup_s'],
+        },
+    )
 
 
 @configclass
@@ -503,59 +511,13 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     # -----------------------------
     dr_enable: bool = True
 
-    # LiDAR curriculum: output observation always stays fixed at 360 rays
-    lidar_max_rays: int = 144
-    lidar_level_0_rays: int = 72
-    lidar_level_1_rays: int = 72
-    lidar_level_2_rays: int = 144
-    lidar_level_3_rays: int = 144
-
-    scan_noise_level_0: float = 0.0
-    scan_noise_level_1: float = 0.005
-    scan_noise_level_2: float = 0.01
-    scan_noise_level_3: float = 0.02
-
-    scan_dropout_level_0: float = 0.0
-    scan_dropout_level_1: float = 0.01
-    scan_dropout_level_2: float = 0.02
-    scan_dropout_level_3: float = 0.03
-
-    # Battery / motor strength randomization
-    battery_scale_level_0_min: float = 1.00
-    battery_scale_level_0_max: float = 1.00
-    battery_scale_level_1_min: float = 0.95
-    battery_scale_level_1_max: float = 1.00
-    battery_scale_level_2_min: float = 0.90
-    battery_scale_level_2_max: float = 1.00
-    battery_scale_level_3_min: float = 0.80
-    battery_scale_level_3_max: float = 1.00
-
-    # Action delay randomization
-    action_delay_level_0: int = 0
-    action_delay_level_1: int = 1
-    action_delay_level_2: int = 2
-    action_delay_level_3: int = 3
-    # Physics domain randomization
-    mass_level_0_min: float = 1.0
-    mass_level_0_max: float = 1.0
-    mass_level_1_min: float = 0.95
-    mass_level_1_max: float = 1.05
-    mass_level_2_min: float = 0.90
-    mass_level_2_max: float = 1.10
-    mass_level_3_min: float = 0.85
-    mass_level_3_max: float = 1.15
-
-    com_level_0_xy_m: float = 0.0
-    com_level_1_xy_m: float = 0.005
-    com_level_2_xy_m: float = 0.010
-    com_level_3_xy_m: float = 0.020
     com_z_m: float = 0.005
 
 
-    curriculum_max_level: int = 20 #len(custom_events.read_config()['domain_randomization_stages'] + custom_events.read_config()['obstacle_stages'])
+    curriculum_max_level: int = -1 #len(custom_events.read_config()['domain_randomization_stages'] + custom_events.read_config()['obstacle_stages'])
     fixed_curriculum_level: int = -1
-    curriculum_perf_window: int = 1000
-    curriculum_min_samples: int = 500
+    curriculum_perf_window: int = 5000
+    curriculum_min_samples: int = 4500
 
     curriculum_success_promote: float = 0.75
     curriculum_map_collision_promote: float = 0.10

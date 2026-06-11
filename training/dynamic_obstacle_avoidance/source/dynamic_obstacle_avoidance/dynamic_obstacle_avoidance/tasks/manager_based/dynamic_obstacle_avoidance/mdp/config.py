@@ -16,8 +16,8 @@ domain_randomization_stages: list = [
 obstacle_stages: list = [
   'side_stationary_tiny',
   'side_stationary_small',
-  # 'center_stationary_tiny',
-  # 'center_stationary_small',
+  'center_stationary_tiny',
+  'center_stationary_small',
   # 'center_stationary_medium',
   # 'slow_crossing_far',
   # 'slow_crossing_near',
@@ -42,9 +42,9 @@ ACTIONS: dict = {
     'max_vx': 0.75,
     'max_vy': 0.75,
     'max_wz': 2.0,
-    'max_delta_vx': 0.04,
-    'max_delta_vy': 0.04,
-    'max_delta_wz': 0.12
+    'max_delta_vx': 0.025,
+    'max_delta_vy': 0.025,
+    'max_delta_wz': 0.08
 }
 
 OBSERVATIONS: dict = {

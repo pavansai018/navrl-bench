@@ -42,9 +42,9 @@ ACTIONS: dict = {
     'max_vx': 0.75,
     'max_vy': 0.75,
     'max_wz': 2.0,
-    'max_delta_vx': 0.025, #0.04,
-    'max_delta_vy': 0.025, #0.04,
-    'max_delta_wz': 0.08, #0.12
+    'max_delta_vx': 0.025,
+    'max_delta_vy': 0.025,
+    'max_delta_wz': 0.08
 }
 
 OBSERVATIONS: dict = {
@@ -91,29 +91,28 @@ EVENTS: dict = {
 }
 
 REWARDS: dict = {
-    'progress': {'weight': 10.0, 'max_step_progress': 0.05,},
-    'goal_approach':{'weight': 5.0, 'max_step_progress': 0.08,},
+    'progress': {'weight': 35.0, 'max_step_progress': 0.05,},
+    'goal_approach':{'weight': 15.0, 'max_step_progress': 0.08,},
     'cross_track': {'weight': -1.5, 'max_error': 1.0,},
-    'path_rejoin': {'weight': 10.0, 'active_threshold': 0.2,},
+    'path_rejoin': {'weight': 5.0, 'active_threshold': 0.2,},
     'heading_alignment': {'weight': 8.0, 'lookahead_index_offset': 4,},
-    'dynamic_collision': {'weight': -250.0,'robot_radius': 0.3,},
-    'dynamic_clearance': {'weight': -15.0, 'robot_radius': 0.22, 'clearance': 0.45,},
-    'dynamic_ttc': {'weight': -8.0, 'robot_radius': 0.22,'horizon_s': 1.0,},
+    'dynamic_collision': {'weight': -100.0,'robot_radius': 0.22,},
+    'dynamic_clearance': {'weight': -5.0, 'robot_radius': 0.22, 'clearance': 0.25,},
+    'dynamic_ttc': {'weight': -1.0, 'robot_radius': 0.22,'horizon_s': 1.0,},
     'lateral_oscillation': {'weight': -0.35,},
     'map_collision': {'weight': -150.0, 'radius': 0.22,},
     'final_goal': {'weight': 120.0,'threshold': 0.30,},
     'action_smoothness': {'weight': -0.06,},
     'yaw_rate': {'weight': -0.05,},
-    'path_velocity': {'weight': 0.0,},
+    'path_velocity': {'weight': 6.0,},
     'time': {'weight': -0.06,},
-    'no_wait': {'weight': -0.0, 'speed_threshold': 0.10,},
-    'static_velocity_clearance': {'weight': -5.0, 'safe_distance': 0.30, 'max_range': 4.0, 'num_rays': 144, 'sector_half_angle_rad': 0.785398, 'min_speed': 0.05,},
-    'start_speed': {'weight': -8.0, 'warmup_s': 1.5,},
+    'no_wait': {'weight': -5.0, 'speed_threshold': 0.10,},
+    'static_velocity_clearance': {'weight': -5.0, 'safe_distance': 0.30, 'max_range': 4.0, 'num_rays': 144, 'sector_half_angle_rad': 0.785398, 'min_speed': 0.05,}
 }
 
 TERMINATIONS: dict = {
     'final_goal_reached': {'threshold': 0.3,},
     'map_collision': {'radius': 0.22,},
-    'dynamic_collision': {'robot_radius': 0.30,},
+    'dynamic_collision': {'robot_radius': 0.22,},
     'stuck': {'speed_threshold': 0.02, 'time_window_s': 2.0, 'grace_period_s': 2.0,}
 }

@@ -6,7 +6,7 @@ import torch
 from .path_dataset import Nav2PathDataset
 from .nav2_map import Nav2OccupancyMap
 from isaaclab.managers import SceneEntityCfg
-from .observations import map_collision_direction_flags
+from .observations import map_collision_direction_flags, combined_static_dynamic_scan
 from . import config
 
 def _ensure_nav2_path_buffers(env, max_path_points: int = 600):
@@ -661,13 +661,19 @@ def draw_nav2_map_path_scan_debug(
         # except Exception:
         #     scan_norm = env.nav2_occupancy_map.raycast_scan(robot_xy=robot_xy.unsqueeze(0), robot_yaw=yaw.unsqueeze(0), num_rays=num_rays, max_range=max_range, step_size=step_size)[0]
 
-        scan_norm = env.nav2_occupancy_map.raycast_scan(
-            robot_xy=robot_xy.unsqueeze(0),
-            robot_yaw=yaw.unsqueeze(0),
+        # scan_norm = env.nav2_occupancy_map.raycast_scan(
+        #     robot_xy=robot_xy.unsqueeze(0),
+        #     robot_yaw=yaw.unsqueeze(0),
+        #     num_rays=num_rays,
+        #     max_range=max_range,
+        #     step_size=step_size,
+        # )[0]
+        scan_norm = combined_static_dynamic_scan(
+            env,
             num_rays=num_rays,
             max_range=max_range,
             step_size=step_size,
-        )[0]
+        )[eid]
         scan_m = scan_norm * max_range
         world_angles = yaw + ray_angles
 

@@ -395,6 +395,7 @@ def dynamic_path_blockage(env, lookahead_points: int = 32, path_radius: float = 
         d = torch.norm(env.dyn_obs_xy - p[:, None, :], dim=-1)
         hit = env.dyn_obs_active & (d < (env.dyn_obs_radius + path_radius))
         blocked = blocked | hit.any(dim=-1)
+    env.navrl_path_blocked = blocked
     return blocked.float().unsqueeze(-1)
 
 def dynamic_obstacle_collision_flag(env, robot_radius: float = 0.22, safety_margin: float = 0.02) -> torch.Tensor:

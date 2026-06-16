@@ -1,0 +1,494 @@
+import torch
+import torch.nn.functional as F
+import math
+from .nav2_map import Nav2OccupancyMap
+
+def _env_origins(env, env_ids: torch.Tensor | None = None):
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+
+    if hasattr(env.scene, "env_origins"):
+        return env.scene.env_origins[env_ids, :2]
+
+    return torch.zeros(len(env_ids), 2, device=env.device)
+
+def _robot_xy(env, asset_name: str = "robot"):
+    robot = env.scene[asset_name]
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    return robot.data.root_pos_w[:, :2] - _env_origins(env, env_ids)
+
+
+def _robot_yaw(env, asset_name: str = "robot"):
+    robot = env.scene[asset_name]
+    q = robot.data.root_quat_w
+
+    qw = q[:, 0]
+    qx = q[:, 1]
+    qy = q[:, 2]
+    qz = q[:, 3]
+
+    yaw = torch.atan2(
+        2.0 * (qw * qz + qx * qy),
+        1.0 - 2.0 * (qy * qy + qz * qz),
+    )
+    return yaw
+
+
+def local_path_window(
+    env,
+    num_points: int = 8,
+    step: int = 8,
+) -> torch.Tensor:
+    """Return future Nav2 path points in robot frame.
+
+    Output shape:
+        [num_envs, num_points * 2]
+
+    This is the key observation for RL local-controller behavior.
+    """
+    if not hasattr(env, "navrl_global_path_xy"):
+        return torch.zeros(env.num_envs, num_points * 2, device=env.device)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+
+    # Ignore padded zeros after valid_count by setting distance large.
+    distances = torch.norm(path - robot_xy[:, None, :], dim=-1)
+
+    ids = torch.arange(path.shape[1], device=env.device)[None, :]
+    valid_mask = ids < valid_count[:, None]
+    distances = torch.where(valid_mask, distances, torch.ones_like(distances) * 1e6)
+
+    nearest_idx = torch.argmin(distances, dim=-1)
+
+    out = torch.zeros(env.num_envs, num_points, 2, device=env.device)
+
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    cos_yaw = torch.cos(-yaw)
+    sin_yaw = torch.sin(-yaw)
+
+    for k in range(num_points):
+        idx = nearest_idx + (k + 1) * step
+        idx = torch.minimum(idx, valid_count - 1)
+        idx = torch.clamp(idx, min=0)
+
+        p_world = path[env_ids, idx]
+        rel = p_world - robot_xy
+
+        x_b = cos_yaw * rel[:, 0] - sin_yaw * rel[:, 1]
+        y_b = sin_yaw * rel[:, 0] + cos_yaw * rel[:, 1]
+
+        out[:, k, 0] = x_b
+        out[:, k, 1] = y_b
+
+    # Keep scale stable. 4m lookahead should not dominate scan/velocity obs.
+    norm_scale = float(getattr(env.cfg, "path_window_normalization_m", 4.0))
+    return torch.clamp(out.reshape(env.num_envs, num_points * 2) / norm_scale, -2.0, 2.0)
+
+
+def combined_static_dynamic_scan(env, num_rays: int = 360, max_range: float = 4.0, step_size: float = 0.05) -> torch.Tensor:
+    """Deployment-style local scan: nearest hit from static map or dynamic obstacles."""
+    max_rays = int(getattr(env.cfg, "lidar_max_rays", num_rays))
+    if hasattr(env, "dr_lidar_rays"):
+        current_rays = int(env.dr_lidar_rays.max().item())
+    else:
+        current_rays = max_rays
+    static_scan = map_based_scan(env, num_rays=num_rays, max_range=max_range, step_size=step_size)
+    dyn_scan = dynamic_obstacle_scan(env, num_rays=num_rays, max_range=max_range)
+    scan = torch.minimum(static_scan, dyn_scan)
+    if current_rays != max_rays:
+        scan = F.interpolate(
+            scan.unsqueeze(1),
+            size=max_rays,
+            mode="linear",
+            align_corners=False,
+        ).squeeze(1)
+
+    scan = _apply_scan_domain_randomization(env, scan)
+    return scan
+
+
+def map_based_scan(env, num_rays: int = 360, max_range: float = 4.0, step_size: float = 0.05,) -> torch.Tensor:
+    """Map-only lidar scan.
+
+    This scan sees:
+      - Nav2 occupancy map
+
+    This scan does NOT see:
+      - other robots
+      - path markers
+      - goal markers
+      - visual map blocks
+    """
+    _ensure_nav2_map(env)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+
+    return env.nav2_occupancy_map.raycast_scan(
+        robot_xy=robot_xy, robot_yaw=yaw, num_rays=num_rays, max_range=max_range, step_size=step_size, unknown_is_occupied=True,
+    )
+
+
+def dynamic_obstacle_scan(env, num_rays: int = 360, max_range: float = 4.0) -> torch.Tensor:
+    """Analytic local lidar scan against tensor dynamic circular obstacles."""
+    _ensure_dynamic_buffers(env)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+    device = env.device
+
+    ray_angles = torch.linspace(-math.pi, math.pi, num_rays, device=device)
+    world_angles = yaw[:, None] + ray_angles[None, :]
+    ray_dir = torch.stack([torch.cos(world_angles), torch.sin(world_angles)], dim=-1)  # [E, R, 2]
+
+    obs_rel = env.dyn_obs_xy[:, None, :, :] - robot_xy[:, None, None, :]              # [E, 1, O, 2]
+    d = ray_dir[:, :, None, :]                                                       # [E, R, 1, 2]
+
+    proj = torch.sum(obs_rel * d, dim=-1)                                            # [E, R, O]
+    perp_vec = obs_rel - proj[..., None] * d
+    perp_dist = torch.norm(perp_vec, dim=-1)
+
+    radius = env.dyn_obs_radius[:, None, :]
+    active = env.dyn_obs_active[:, None, :]
+    valid = active & (proj > 0.0) & (proj < max_range) & (perp_dist <= radius)
+
+    chord = torch.sqrt(torch.clamp(radius * radius - perp_dist * perp_dist, min=0.0))
+    hit_dist = torch.clamp(proj - chord, min=0.0, max=max_range)
+    hit_dist = torch.where(valid, hit_dist, torch.ones_like(hit_dist) * max_range)
+
+    scan = torch.min(hit_dist, dim=-1).values
+    return torch.clamp(scan / max_range, 0.0, 1.0)
+
+
+def _apply_scan_domain_randomization(env, scan: torch.Tensor) -> torch.Tensor:
+    if not bool(getattr(env.cfg, "dr_enable", True)):
+        return torch.clamp(scan, 0.0, 1.0)
+
+    if hasattr(env, "dr_scan_noise_std"):
+        noise = torch.randn_like(scan) * env.dr_scan_noise_std[:, None]
+        scan = scan + noise
+
+    if hasattr(env, "dr_scan_dropout_prob"):
+        dropout = torch.rand_like(scan) < env.dr_scan_dropout_prob[:, None]
+        scan = torch.where(dropout, torch.ones_like(scan), scan)
+
+    return torch.clamp(scan, 0.0, 1.0)
+
+def _ensure_nav2_map(env):
+    if not hasattr(env, "nav2_occupancy_map"):
+        env.nav2_occupancy_map = Nav2OccupancyMap(
+            map_yaml_path=env.cfg.nav2_map_yaml_path,
+            device=env.device,
+            inflation_radius_m=0.12,
+        )
+
+def _ensure_dynamic_buffers(env):
+    if not hasattr(env, "dyn_obs_xy"):
+        num_obs = int(getattr(env.cfg, "max_dynamic_obstacles", 6))
+        env.dyn_obs_xy = torch.zeros(env.num_envs, num_obs, 2, device=env.device)
+        env.dyn_obs_vel_xy = torch.zeros(env.num_envs, num_obs, 2, device=env.device)
+        env.dyn_obs_radius = torch.zeros(env.num_envs, num_obs, device=env.device)
+        env.dyn_obs_active = torch.zeros(env.num_envs, num_obs, dtype=torch.bool, device=env.device)
+
+def dynamic_obstacle_states(env, num_obstacles: int = 4, max_range: float = 4.0) -> torch.Tensor:
+    """Nearest dynamic obstacles in robot frame: [x, y, vx, vy, radius, active] per obstacle.
+
+    This is local/predictive context, not global map context. It gives velocity information
+    that a single scan frame cannot provide.
+    """
+    _ensure_dynamic_buffers(env)
+
+    robot_xy = _robot_xy(env)
+    yaw = _robot_yaw(env)
+    cos_yaw = torch.cos(-yaw)
+    sin_yaw = torch.sin(-yaw)
+
+    rel_w = env.dyn_obs_xy - robot_xy[:, None, :]
+    dist = torch.norm(rel_w, dim=-1)
+    dist_masked = torch.where(env.dyn_obs_active, dist, torch.ones_like(dist) * 1e6)
+    k = min(num_obstacles, env.dyn_obs_xy.shape[1])
+    ids = torch.topk(dist_masked, k=k, dim=-1, largest=False).indices
+
+    env_ids = torch.arange(env.num_envs, device=env.device)[:, None]
+    rel = rel_w[env_ids, ids]
+    vel_w = env.dyn_obs_vel_xy[env_ids, ids]
+    rad = env.dyn_obs_radius[env_ids, ids]
+    active = env.dyn_obs_active[env_ids, ids].float()
+
+    x_b = cos_yaw[:, None] * rel[..., 0] - sin_yaw[:, None] * rel[..., 1]
+    y_b = sin_yaw[:, None] * rel[..., 0] + cos_yaw[:, None] * rel[..., 1]
+    vx_b = cos_yaw[:, None] * vel_w[..., 0] - sin_yaw[:, None] * vel_w[..., 1]
+    vy_b = sin_yaw[:, None] * vel_w[..., 0] + cos_yaw[:, None] * vel_w[..., 1]
+
+    out = torch.stack([
+        torch.clamp(x_b / max_range, -1.5, 1.5),
+        torch.clamp(y_b / max_range, -1.5, 1.5),
+        torch.clamp(vx_b / 1.0, -1.5, 1.5),
+        torch.clamp(vy_b / 1.0, -1.5, 1.5),
+        torch.clamp(rad / 0.5, 0.0, 2.0),
+        active,
+    ], dim=-1)
+
+    if k < num_obstacles:
+        pad = torch.zeros(env.num_envs, num_obstacles - k, 6, device=env.device)
+        out = torch.cat([out, pad], dim=1)
+
+    return out.reshape(env.num_envs, num_obstacles * 6)
+
+def previous_local_offsets(env) -> torch.Tensor:
+    if hasattr(env, "rl_local_path_offsets"):
+        max_offset = float(getattr(env.cfg.actions.local_path, "max_offset", 0.8))
+        return torch.clamp(env.rl_local_path_offsets / max_offset, -1.0, 1.0)
+
+    return torch.zeros(env.num_envs, 8, device=env.device)
+
+
+def dynamic_path_blockage(env, lookahead_points: int = 32, path_radius: float = 0.35) -> torch.Tensor:
+    """Scalar: 1 if active obstacle overlaps the near-future path corridor."""
+    _ensure_dynamic_buffers(env)
+    if not hasattr(env, "navrl_global_path_xy"):
+        return torch.zeros(env.num_envs, 1, device=env.device)
+
+    robot_xy = _robot_xy(env)
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+    nearest_idx = _nearest_path_index(env, robot_xy)
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    blocked = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    for k in range(lookahead_points):
+        idx = torch.minimum(nearest_idx + k, valid_count - 1)
+        p = path[env_ids, idx]
+        d = torch.norm(env.dyn_obs_xy - p[:, None, :], dim=-1)
+        hit = env.dyn_obs_active & (d < (env.dyn_obs_radius + path_radius))
+        blocked = blocked | hit.any(dim=-1)
+    return blocked.float().unsqueeze(-1)
+
+def _nearest_path_index(env, robot_xy: torch.Tensor) -> torch.Tensor:
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+    dist = torch.norm(path - robot_xy[:, None, :], dim=-1)
+    ids = torch.arange(path.shape[1], device=env.device)[None, :]
+    valid_mask = ids < valid_count[:, None]
+    dist = torch.where(valid_mask, dist, torch.ones_like(dist) * 1e6)
+    return torch.argmin(dist, dim=-1)
+
+def local_path_collision_risk_observation(
+    env,
+    num_points: int = 8,
+    safe_distance: float = 0.35,
+):
+    if not hasattr(env, "dyn_obs_xy"):
+        return torch.zeros(env.num_envs, 1, device=env.device)
+
+    # build_rl_local_path(env, num_points=num_points)
+    # pts = env.rl_local_path_world
+    pts, _ = get_rl_local_path(env, num_points=num_points, step=4)
+
+    diff = env.dyn_obs_xy[:, :, None, :] - pts[:, None, :, :]
+    dist = torch.norm(diff, dim=-1)
+
+    clearance = dist - env.dyn_obs_radius[:, :, None]
+    clearance = torch.where(
+        env.dyn_obs_active[:, :, None],
+        clearance,
+        torch.ones_like(clearance) * 10.0,
+    )
+
+    min_clear = clearance.min(dim=1).values.min(dim=1).values
+    risk = torch.clamp((safe_distance - min_clear) / safe_distance, 0.0, 1.0)
+
+    return risk.unsqueeze(-1)
+
+def dynamic_obstacle_collision_flag(env, robot_radius: float = 0.22, safety_margin: float = 0.02) -> torch.Tensor:
+    _ensure_dynamic_buffers(env)
+    robot_xy = _robot_xy(env)
+    d = torch.norm(env.dyn_obs_xy - robot_xy[:, None, :], dim=-1)
+    collision = env.dyn_obs_active & (d < (env.dyn_obs_radius + robot_radius + safety_margin))
+    return collision.any(dim=-1)
+
+
+def map_collision_flag(
+    env,
+    radius: float = 0.22,
+    num_points: int = 16,
+) -> torch.Tensor:
+    _ensure_nav2_map(env)
+
+    robot_xy = _robot_xy(env)
+
+    angles = torch.linspace(0.0, 2.0 * math.pi, num_points + 1, device=env.device)[:-1]
+    offsets = torch.stack(
+        [
+            torch.cos(angles) * radius,
+            torch.sin(angles) * radius,
+        ],
+        dim=-1,
+    )
+
+    footprint_points = robot_xy[:, None, :] + offsets[None, :, :]
+
+    occupied = env.nav2_occupancy_map.is_occupied_world(
+        footprint_points.reshape(-1, 2),
+        unknown_is_occupied=True,
+    ).reshape(env.num_envs, num_points)
+
+    center_occupied = env.nav2_occupancy_map.is_occupied_world(
+        robot_xy,
+        unknown_is_occupied=True,
+    )
+
+    return occupied.any(dim=-1) | center_occupied
+
+def map_collision_observation(env) -> torch.Tensor:
+    return map_collision_flag(
+        env,
+        radius=0.22,
+        num_points=16,
+    ).float().unsqueeze(-1)
+
+def dynamic_collision_observation(env) -> torch.Tensor:
+    return dynamic_obstacle_collision_flag(env).float().unsqueeze(-1)
+
+def build_rl_local_path(env, num_points: int = 8, step: int = 8):
+    if not hasattr(env, "rl_local_path_offsets"):
+        env.rl_local_path_offsets = torch.zeros(
+            env.num_envs,
+            num_points,
+            device=env.device,
+        )
+
+    if not hasattr(env, "navrl_global_path_xy"):
+        env.rl_local_path_world = torch.zeros(env.num_envs, num_points, 2, device=env.device)
+        env.rl_local_path_robot = torch.zeros(env.num_envs, num_points, 2, device=env.device)
+        return env.rl_local_path_robot
+
+    robot_xy = _robot_xy(env)
+    robot_yaw = _robot_yaw(env)
+
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    nearest_idx = _nearest_path_index(env, robot_xy)
+
+    k = torch.arange(1, num_points + 1, device=env.device)[None, :]
+    idx = nearest_idx[:, None] + k * step
+    idx = torch.minimum(idx, (valid_count - 1)[:, None])
+    idx = torch.clamp(idx, min=0)
+
+    base_points = path[env_ids[:, None], idx]
+
+    tangent = base_points[:, -1, :] - base_points[:, 0, :]
+    tangent = tangent / torch.norm(tangent, dim=-1, keepdim=True).clamp_min(1e-6)
+
+    normal = torch.stack([-tangent[:, 1], tangent[:, 0]], dim=-1)
+
+    offsets = env.rl_local_path_offsets[:, :num_points]
+    offsets = static_safe_offset_projection(
+        env,
+        base_points=base_points,
+        normal=normal,
+        offsets=offsets,
+        max_offset=0.8,
+        robot_radius=0.25,
+    )
+    local_path_world = base_points + offsets[:, :, None] * normal[:, None, :]
+
+    rel = local_path_world - robot_xy[:, None, :]
+
+    cy = torch.cos(-robot_yaw)[:, None]
+    sy = torch.sin(-robot_yaw)[:, None]
+
+    x_b = cy * rel[..., 0] - sy * rel[..., 1]
+    y_b = sy * rel[..., 0] + cy * rel[..., 1]
+
+    env.rl_local_path_world = local_path_world
+    env.rl_local_path_robot = torch.stack([x_b, y_b], dim=-1)
+
+    return env.rl_local_path_robot
+
+def get_rl_local_path(env, num_points: int = 8, step: int = 4):
+    step_count = int(getattr(env, "common_step_counter", 0))
+
+    if (
+        hasattr(env, "rl_local_path_world")
+        and hasattr(env, "rl_local_path_cache_step")
+        and env.rl_local_path_cache_step == step_count
+    ):
+        return env.rl_local_path_world, env.rl_local_path_robot
+
+    build_rl_local_path(env, num_points=num_points, step=step)
+    env.rl_local_path_cache_step = step_count
+
+    return env.rl_local_path_world, env.rl_local_path_robot
+
+def static_safe_offset_projection(
+    env,
+    base_points: torch.Tensor,   # [E, N, 2]
+    normal: torch.Tensor,        # [E, 2]
+    offsets: torch.Tensor,       # [E, N]
+    max_offset: float = 0.8,
+    robot_radius: float = 0.25,
+):
+    if not hasattr(env, "nav2_occupancy_map"):
+        return offsets
+
+    E, N = offsets.shape
+    device = env.device
+
+    candidate_offsets = torch.tensor(
+        [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8],
+        device=device,
+    )
+
+    candidate_offsets = torch.clamp(candidate_offsets, -max_offset, max_offset)
+
+    C = candidate_offsets.numel()
+
+    candidates = (
+        base_points[:, :, None, :]
+        + candidate_offsets[None, None, :, None] * normal[:, None, None, :]
+    )  # [E, N, C, 2]
+
+    angles = torch.linspace(0.0, 2.0 * torch.pi, 12, device=device)[:-1]
+    circle = torch.stack(
+        [
+            torch.cos(angles) * robot_radius,
+            torch.sin(angles) * robot_radius,
+        ],
+        dim=-1,
+    )  # [11, 2]
+
+    check_pts = candidates[:, :, :, None, :] + circle[None, None, None, :, :]
+    flat = check_pts.reshape(-1, 2)
+
+    occupied = env.nav2_occupancy_map.is_occupied_world(
+        flat,
+        unknown_is_occupied=True,
+    ).reshape(E, N, C, -1)
+
+    safe = ~occupied.any(dim=-1)  # [E, N, C]
+
+    desired = offsets[:, :, None]
+    cost = torch.abs(candidate_offsets[None, None, :] - desired)
+
+    cost = torch.where(
+        safe,
+        cost,
+        torch.ones_like(cost) * 1e6,
+    )
+
+    best_ids = torch.argmin(cost, dim=-1)
+    projected = candidate_offsets[best_ids]
+
+    # If no candidate is safe, force global path offset 0.
+    has_safe = safe.any(dim=-1)
+    projected = torch.where(has_safe, projected, torch.zeros_like(projected))
+
+    return projected

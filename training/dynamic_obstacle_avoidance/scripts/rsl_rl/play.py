@@ -226,11 +226,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 "mean_goal_dist=",
                 float(dist.mean().item()),
             )
-            term = env.unwrapped.action_manager._terms["base_velocity"]
-            print(
-                "dist=", float(dist[0].item()),
-                "processed_action=", term.processed_actions[0].detach().cpu().numpy(),
-            )
+            # term = env.unwrapped.action_manager._terms["base_velocity"]
+            # print(
+            #     "dist=", float(dist[0].item()),
+            #     "processed_action=", term.processed_actions[0].detach().cpu().numpy(),
+            # )
             # reset recurrent states for episodes that have terminated
             if version.parse(installed_version) >= version.parse("4.0.0"):
                 policy.reset(dones)

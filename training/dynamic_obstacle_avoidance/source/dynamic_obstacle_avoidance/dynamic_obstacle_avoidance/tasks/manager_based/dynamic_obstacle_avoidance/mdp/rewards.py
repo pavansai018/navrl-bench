@@ -345,3 +345,11 @@ def start_speed_penalty(env, asset_cfg: SceneEntityCfg, warmup_s: float = 2.0):
     speed = torch.sqrt(vx * vx + vy * vy)
 
     return torch.where(active, speed, torch.zeros_like(speed))
+
+def lateral_bypass_reward(env, asset_cfg) -> torch.Tensor:
+    if not hasattr(env, "navrl_path_blocked"):
+        return torch.zeros(env.num_envs, device=env.device)
+    action = env.action_manager._terms["base_velocity"].processed_actions
+    vy_abs = torch.abs(action[:, 1])
+    max_vy = float(getattr(env.cfg.actions.base_velocity, "max_vy", 0.5))
+    return env.navrl_path_blocked.float() * torch.clamp(vy_abs / max_vy, 0.0, 1.0)

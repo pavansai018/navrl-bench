@@ -139,20 +139,20 @@ class ObservationsCfg:
             params=config.OBSERVATIONS['actor']['combined_scan']['params'],
         )
 
-        # dynamic_obstacles = ObsTerm(
-        #     func=custom_observations.dynamic_obstacle_states,
-        #     params=config.OBSERVATIONS['actor']['dynamic_obstacles']['params'],
-        # )
+        dynamic_obstacles = ObsTerm(
+            func=custom_observations.dynamic_obstacle_states,
+            params=config.OBSERVATIONS['actor']['dynamic_obstacles']['params'],
+        )
 
-        # path_blocked = ObsTerm(
-        #     func=custom_observations.dynamic_path_blockage,
-        #     params=config.OBSERVATIONS['actor']['path_blocked']['params'],
-        # )
+        path_blocked = ObsTerm(
+            func=custom_observations.dynamic_path_blockage,
+            params=config.OBSERVATIONS['actor']['path_blocked']['params'],
+        )
 
-        # time_to_closest_approach = ObsTerm(
-        #     func=custom_observations.time_to_closest_approach,
-        #     params=config.OBSERVATIONS['actor']['time_to_closest_approach']['params'],
-        # )
+        time_to_closest_approach = ObsTerm(
+            func=custom_observations.time_to_closest_approach,
+            params=config.OBSERVATIONS['actor']['time_to_closest_approach']['params'],
+        )
 
         # Robot motion
         base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
@@ -428,6 +428,12 @@ class RewardsCfg:
         },
     )
 
+    lateral_bypass = RewTerm(
+        func=custom_rewards.lateral_bypass_reward,
+        weight=config.REWARDS['lateral_bypass']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+
 
 @configclass
 class TerminationsCfg:
@@ -519,9 +525,9 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     curriculum_perf_window: int = 5000
     curriculum_min_samples: int = 4500
 
-    curriculum_success_promote: float = 0.75
-    curriculum_map_collision_promote: float = 0.10
-    curriculum_dynamic_collision_promote: float = 0.10
+    curriculum_success_promote: float = 0.70
+    curriculum_map_collision_promote: float = 0.20
+    curriculum_dynamic_collision_promote: float = 0.20
     curriculum_timeout_promote: float = 0.15
 
     curriculum_success_demote: float = 0.40

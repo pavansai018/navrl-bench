@@ -389,8 +389,11 @@ def dynamic_path_blockage(env, lookahead_points: int = 32, path_radius: float = 
     env_ids = torch.arange(env.num_envs, device=env.device)
 
     blocked = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-    for k in range(lookahead_points):
-        idx = torch.minimum(nearest_idx + k, valid_count - 1)
+    # for k in range(lookahead_points):
+    #     idx = torch.minimum(nearest_idx + k, valid_count - 1)
+    for k in range(-8, lookahead_points):
+        idx = torch.clamp(nearest_idx + k, min=0)
+        idx = torch.minimum(idx, valid_count - 1)
         p = path[env_ids, idx]
         d = torch.norm(env.dyn_obs_xy - p[:, None, :], dim=-1)
         hit = env.dyn_obs_active & (d < (env.dyn_obs_radius + path_radius))

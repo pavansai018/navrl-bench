@@ -407,18 +407,18 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot"), "speed_threshold": config.REWARDS['no_wait']['speed_threshold']},
     )
 
-    # static_velocity_clearance = RewTerm(
-    #     func=custom_rewards.static_velocity_clearance_penalty,
-    #     weight=config.REWARDS['static_velocity_clearance']['weight],
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot"),
-    #         "safe_distance": config.REWARDS['static_velocity_clearance']['safe_distance'],
-    #         "max_range": config.REWARDS['static_velocity_clearance']['max_range'],
-    #         "num_rays": config.REWARDS['static_velocity_clearance']['num_rays'],
-    #         "sector_half_angle_rad": config.REWARDS['static_velocity_clearance']['sector_half_angle_rad'],
-    #         "min_speed": config.REWARDS['static_velocity_clearance']['min_speed'],
-    #     },
-    # )
+    static_velocity_clearance = RewTerm(
+        func=custom_rewards.static_velocity_clearance_penalty,
+        weight=config.REWARDS['static_velocity_clearance']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "safe_distance": config.REWARDS['static_velocity_clearance']['safe_distance'],
+            "max_range": config.REWARDS['static_velocity_clearance']['max_range'],
+            "num_rays": config.REWARDS['static_velocity_clearance']['num_rays'],
+            "sector_half_angle_rad": config.REWARDS['static_velocity_clearance']['sector_half_angle_rad'],
+            "min_speed": config.REWARDS['static_velocity_clearance']['min_speed'],
+        },
+    )
     start_speed = RewTerm(
         func=custom_rewards.start_speed_penalty,
         weight=config.REWARDS['start_speed']['weight'],
@@ -431,7 +431,7 @@ class RewardsCfg:
     lateral_bypass = RewTerm(
         func=custom_rewards.lateral_bypass_reward,
         weight=config.REWARDS['lateral_bypass']['weight'],
-        params={"asset_cfg": SceneEntityCfg("robot")},
+        params={"asset_cfg": SceneEntityCfg("robot"), "max_cte": config.REWARDS['lateral_bypass']['max_cte']},
     )
 
 
@@ -530,10 +530,10 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     curriculum_dynamic_collision_promote: float = 0.20
     curriculum_timeout_promote: float = 0.15
 
-    curriculum_success_demote: float = 0.40
-    curriculum_map_collision_demote: float = 0.20
-    curriculum_dynamic_collision_demote: float = 0.35
-    curriculum_timeout_demote: float = 0.40
+    curriculum_success_demote: float = 0.10
+    curriculum_map_collision_demote: float = 0.50
+    curriculum_dynamic_collision_demote: float = 0.5
+    curriculum_timeout_demote: float = 0.50
 
     enable_static_action_shield: bool = True
     shield_robot_radius: float = 0.22

@@ -107,9 +107,10 @@ REWARDS: dict = {
     'yaw_rate': {'weight': -0.05,},
     'path_velocity': {'weight': 6.0,},
     'time': {'weight': -0.06,},
-    'no_wait': {'weight': -1.5, 'speed_threshold': 0.10,},
+    'no_wait': {'weight': -2.0, 'speed_threshold': 0.10,},
     'static_velocity_clearance': {'weight': -15.0, 'safe_distance': 0.30, 'max_range': 4.0, 'num_rays': 144, 'sector_half_angle_rad': 0.785398, 'min_speed': 0.05,},
     'start_speed': {'weight': -8.0, 'warmup_s': 1.5,},
+    'mppi_imitation': {'weight': 25.0,},
 }
 
 TERMINATIONS: dict = {
@@ -117,4 +118,38 @@ TERMINATIONS: dict = {
     'map_collision': {'radius': 0.22,},
     'dynamic_collision': {'robot_radius': 0.22,},
     'stuck': {'speed_threshold': 0.02, 'time_window_s': 2.0, 'grace_period_s': 2.0,}
+}
+
+MPPI_TEACHER: dict = {
+    'num_samples': 128,
+    'horizon': 24,
+    'dt': 0.05,
+    'temperature': 0.35,
+    'env_chunk_size': 128,
+    'recompute_interval': 2,
+
+    'vx_std': 0.22,
+    'vy_std': 0.32,
+    'wz_std': 0.50,
+
+    'max_delta_vx': ACTIONS['max_delta_vx'],
+    'max_delta_vy': ACTIONS['max_delta_vy'],
+    'max_delta_wz': ACTIONS['max_delta_wz'],
+
+    'robot_radius': 0.22,
+    'dynamic_clearance': 0.20,
+    'num_footprint_points': 8,
+    'static_map_inflation_radius_m': 0.12,
+
+    'path_step_per_t': 2,
+
+    'w_static_collision': 5000.0,
+    'w_dynamic_collision': 5000.0,
+    'w_dynamic_clearance': 40.0,
+    'w_path': 8.0,
+    'w_goal': 6.0,
+    'w_heading': 1.0,
+    'w_wait': 2.0,
+    'w_action': 0.05,
+    'w_smooth': 0.08,
 }

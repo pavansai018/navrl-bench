@@ -14,10 +14,10 @@ domain_randomization_stages: list = [
 ]
 
 obstacle_stages: list = [
-  'side_stationary_tiny',
-  'side_stationary_small',
   'center_stationary_tiny',
+  'side_stationary_tiny',
   'center_stationary_small',
+  'side_stationary_small',
   'center_stationary_medium',
   'slow_crossing_far',
   # 'slow_crossing_near',
@@ -93,14 +93,14 @@ EVENTS: dict = {
 REWARDS: dict = {
     'progress': {'weight': 35.0, 'max_step_progress': 0.05,},
     'goal_approach':{'weight': 5.0, 'max_step_progress': 0.08,},
-    'cross_track': {'weight': -8.0, 'max_error': 1.0,},
+    'cross_track': {'weight': -4.0, 'max_error': 1.0,},
     'path_rejoin': {'weight': 15.0, 'active_threshold': 0.2,},
     'heading_alignment': {'weight': 8.0, 'lookahead_index_offset': 4,},
     'dynamic_collision': {'weight': -100.0,'robot_radius': 0.22,},
     'dynamic_clearance': {'weight': -20.0, 'robot_radius': 0.22, 'clearance': 0.25,},
     'dynamic_ttc': {'weight': -15.0, 'robot_radius': 0.22,'horizon_s': 3.0,},
     'lateral_oscillation': {'weight': -0.35,},
-    'lateral_bypass': {'weight': 2.0},
+    'lateral_bypass': {'weight': 5.0, 'max_cte': 0.8},
     'map_collision': {'weight': -150.0, 'radius': 0.22,},
     'final_goal': {'weight': 120.0,'threshold': 0.30,},
     'action_smoothness': {'weight': -0.06,},
@@ -108,7 +108,7 @@ REWARDS: dict = {
     'path_velocity': {'weight': 6.0,},
     'time': {'weight': -0.06,},
     'no_wait': {'weight': -1.5, 'speed_threshold': 0.10,},
-    'static_velocity_clearance': {'weight': -5.0, 'safe_distance': 0.30, 'max_range': 4.0, 'num_rays': 144, 'sector_half_angle_rad': 0.785398, 'min_speed': 0.05,},
+    'static_velocity_clearance': {'weight': -15.0, 'safe_distance': 0.30, 'max_range': 4.0, 'num_rays': 144, 'sector_half_angle_rad': 0.785398, 'min_speed': 0.05,},
     'start_speed': {'weight': -8.0, 'warmup_s': 1.5,},
 }
 

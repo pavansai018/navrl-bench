@@ -341,7 +341,8 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
         modes = modes[:num_obs]
 
         start_idx = max(5, int(0.10 * vc))
-        end_idx = max(start_idx + 1, min(vc - 2, int(0.65 * vc)))
+        # end_idx = max(start_idx + 1, min(vc - 2, int(0.65 * vc)))
+        end_idx = max(start_idx + 1, min(vc - 2, int(0.35 * vc)))
 
         for j, mode in enumerate(modes):
             idx = int(torch.randint(start_idx, end_idx, (1,), device=env.device).item())
@@ -371,19 +372,25 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
 
             elif mode == "center_stationary_tiny":
                 radius = torch.empty((), device=env.device).uniform_(0.08, 0.11)
-                pos = p0
+                # pos = p0
+                offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
+                pos = p0 + offset * normal
                 vel = torch.zeros(2, device=env.device)
                 scenario = 1
 
             elif mode == "center_stationary_small":
                 radius = torch.empty((), device=env.device).uniform_(0.10, 0.14)
-                pos = p0
+                # pos = p0
+                offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
+                pos = p0 + offset * normal
                 vel = torch.zeros(2, device=env.device)
                 scenario = 1
 
             elif mode == "center_stationary_medium":
                 radius = torch.empty((), device=env.device).uniform_(0.14, 0.18)
-                pos = p0
+                # pos = p0
+                offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
+                pos = p0 + offset * normal
                 vel = torch.zeros(2, device=env.device)
                 scenario = 1
 

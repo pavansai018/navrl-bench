@@ -251,8 +251,14 @@ def path_velocity_reward(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
 
     v = path_mode * v_path + goal_mode * v_goal
 
+    # max_v = float(getattr(env.cfg.actions.base_velocity, "max_vx", 0.75))
+    # return torch.clamp(v / max_v, 0.0, 1.0)
     max_v = float(getattr(env.cfg.actions.base_velocity, "max_vx", 0.75))
-    return torch.clamp(v / max_v, 0.0, 1.0)
+    result = torch.clamp(v / max_v, 0.0, 1.0)
+    if hasattr(env, "navrl_path_blocked"):
+        return result * (1.0 - env.navrl_path_blocked.float())
+    return result
+
 
 def lateral_oscillation_penalty(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     action = env.action_manager._terms["base_velocity"].processed_actions
@@ -327,8 +333,10 @@ def static_velocity_clearance_penalty(
     move_dir_clearance = move_sector_scan.min(dim=-1).values
 
     penalty = (safe_distance - move_dir_clearance) / safe_distance
-
-    return torch.clamp(penalty, 0.0, 1.0)
+    result = torch.clamp(penalty, 0.0, 1.0)
+    if hasattr(env, "navrl_path_blocked"):
+        return result * (1.0 - env.navrl_path_blocked.float())
+    return result
 
 def start_speed_penalty(env, asset_cfg: SceneEntityCfg, warmup_s: float = 2.0):
     robot = env.scene[asset_cfg.name]
@@ -346,10 +354,15 @@ def start_speed_penalty(env, asset_cfg: SceneEntityCfg, warmup_s: float = 2.0):
 
     return torch.where(active, speed, torch.zeros_like(speed))
 
-def lateral_bypass_reward(env, asset_cfg) -> torch.Tensor:
+def lateral_bypass_reward(env, asset_cfg, max_cte: float = 0.8) -> torch.Tensor:
     if not hasattr(env, "navrl_path_blocked"):
         return torch.zeros(env.num_envs, device=env.device)
+    # Only reward lateral motion when still close to the path.
+    # Prevents the robot from staying permanently parallel while path_blocked stays
+    # True from a different obstacle further ahead.
+    cte = nav2_cross_track_penalty(env, asset_cfg, max_error=max_cte + 0.1)
+    near_path = (cte < max_cte).float()
     action = env.action_manager._terms["base_velocity"].processed_actions
     vy_abs = torch.abs(action[:, 1])
     max_vy = float(getattr(env.cfg.actions.base_velocity, "max_vy", 0.5))
-    return env.navrl_path_blocked.float() * torch.clamp(vy_abs / max_vy, 0.0, 1.0)
+    return env.navrl_path_blocked.float() * near_path * torch.clamp(vy_abs / max_vy, 0.0, 1.0)

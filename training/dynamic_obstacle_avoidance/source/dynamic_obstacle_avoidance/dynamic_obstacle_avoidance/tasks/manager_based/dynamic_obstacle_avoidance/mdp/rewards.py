@@ -5,7 +5,7 @@ import math
 from isaaclab.managers import SceneEntityCfg
 
 from .observations import _robot_xy, _robot_yaw, _wrap_to_pi, map_collision_flag, dynamic_obstacle_collision_flag
-
+from .teacher_mppi import get_mppi_teacher_action
 
 
 def constant_penalty(env) -> torch.Tensor:
@@ -366,3 +366,31 @@ def lateral_bypass_reward(env, asset_cfg, max_cte: float = 0.8) -> torch.Tensor:
     vy_abs = torch.abs(action[:, 1])
     max_vy = float(getattr(env.cfg.actions.base_velocity, "max_vy", 0.5))
     return env.navrl_path_blocked.float() * near_path * torch.clamp(vy_abs / max_vy, 0.0, 1.0)
+
+def mppi_teacher_imitation_reward(env) -> torch.Tensor:
+    """Imitation reward for the torch-MPPI teacher.
+
+    Returns 0 for perfect match and negative values for mismatch.
+    This should be used only in early teacher-guided PPO training.
+    """
+    if not hasattr(env, "action_manager") or "base_velocity" not in env.action_manager._terms:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    action_term = env.action_manager._terms["base_velocity"]
+    policy_action = action_term.processed_actions
+    teacher_action = get_mppi_teacher_action(env)
+
+    scale = torch.tensor(
+        [
+            float(getattr(action_term.cfg, "max_vx", 0.5)),
+            float(getattr(action_term.cfg, "max_vy", 0.5)),
+            float(getattr(action_term.cfg, "max_wz", 1.5)),
+        ],
+        device=env.device,
+        dtype=policy_action.dtype,
+    )
+
+    err = (policy_action - teacher_action) / scale.clamp_min(1.0e-6)
+    err2 = torch.sum(err * err, dim=-1)
+
+    return -torch.clamp(err2, 0.0, 4.0)

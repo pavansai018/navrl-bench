@@ -296,44 +296,44 @@ class RewardsCfg:
     No raw vy reward. Mecanum usage is expected to emerge from scenarios where
     lateral/diagonal motion maintains progress while avoiding dynamic obstacles.
     """
-    # progress = RewTerm(
-    #     func=custom_rewards.progress_along_nav2_path,
-    #     weight=config.REWARDS['progress']['weight'],
-    #     params={
-    #         'asset_cfg': SceneEntityCfg('robot'),
-    #         'max_step_progress': config.REWARDS['progress']['max_step_progress'],
-    #     },
-    # )
+    progress = RewTerm(
+        func=custom_rewards.progress_along_nav2_path,
+        weight=config.REWARDS['progress']['weight'],
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'max_step_progress': config.REWARDS['progress']['max_step_progress'],
+        },
+    )
     goal_approach = RewTerm(
         func=custom_rewards.goal_approach_reward,
         weight=config.REWARDS['goal_approach']['weight'],
         params={"asset_cfg": SceneEntityCfg("robot"), "max_step_progress": config.REWARDS['goal_approach']['max_step_progress']},
     )
 
-    # cross_track = RewTerm(
-    #     func=custom_rewards.nav2_cross_track_penalty,
-    #     weight=config.REWARDS['cross_track']['weight'],
-    #     params={
-    #         'asset_cfg': SceneEntityCfg('robot'),
-    #         'max_error': config.REWARDS['cross_track']['max_error'],
-    #     },
-    # )
+    cross_track = RewTerm(
+        func=custom_rewards.nav2_cross_track_penalty,
+        weight=config.REWARDS['cross_track']['weight'],
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'max_error': config.REWARDS['cross_track']['max_error'],
+        },
+    )
 
-    # path_rejoin = RewTerm(
-    #     func=custom_rewards.path_rejoin_reward,
-    #     weight=config.REWARDS['path_rejoin']['weight'],
-    #     params={"asset_cfg": SceneEntityCfg("robot"), "active_threshold": config.REWARDS['path_rejoin']['active_threshold']},
-    # )
+    path_rejoin = RewTerm(
+        func=custom_rewards.path_rejoin_reward,
+        weight=config.REWARDS['path_rejoin']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "active_threshold": config.REWARDS['path_rejoin']['active_threshold']},
+    )
 
 
-    # heading_alignment = RewTerm(
-    #     func=custom_rewards.nav2_heading_alignment_reward,
-    #     weight=config.REWARDS['heading_alignment']['weight'],#1.5,
-    #     params={
-    #         'asset_cfg': SceneEntityCfg('robot'),
-    #         'lookahead_index_offset': config.REWARDS['heading_alignment']['lookahead_index_offset'],
-    #     },
-    # )
+    heading_alignment = RewTerm(
+        func=custom_rewards.nav2_heading_alignment_reward,
+        weight=config.REWARDS['heading_alignment']['weight'],#1.5,
+        params={
+            'asset_cfg': SceneEntityCfg('robot'),
+            'lookahead_index_offset': config.REWARDS['heading_alignment']['lookahead_index_offset'],
+        },
+    )
 
     dynamic_collision = RewTerm(
         func=custom_rewards.dynamic_obstacle_collision_penalty,
@@ -341,25 +341,25 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.REWARDS['dynamic_collision']['robot_radius']},
     )
 
-    # dynamic_clearance = RewTerm(
-    #     func=custom_rewards.dynamic_obstacle_clearance_penalty,
-    #     weight=config.REWARDS['dynamic_clearance']['weight'],
-    #     params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.REWARDS['dynamic_clearance']['robot_radius'], "clearance": config.REWARDS['dynamic_clearance']['clearance']},
-    # )
+    dynamic_clearance = RewTerm(
+        func=custom_rewards.dynamic_obstacle_clearance_penalty,
+        weight=config.REWARDS['dynamic_clearance']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.REWARDS['dynamic_clearance']['robot_radius'], "clearance": config.REWARDS['dynamic_clearance']['clearance']},
+    )
 
-    # dynamic_ttc = RewTerm(
-    #     func=custom_rewards.dynamic_time_to_collision_penalty,
-    #     weight=config.REWARDS['dynamic_ttc']['weight'],
-    #     params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.REWARDS['dynamic_ttc']['robot_radius'], "horizon_s": config.REWARDS['dynamic_ttc']['horizon_s']},
-    # )
+    dynamic_ttc = RewTerm(
+        func=custom_rewards.dynamic_time_to_collision_penalty,
+        weight=config.REWARDS['dynamic_ttc']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "robot_radius": config.REWARDS['dynamic_ttc']['robot_radius'], "horizon_s": config.REWARDS['dynamic_ttc']['horizon_s']},
+    )
 
-    # lateral_oscillation = RewTerm(
-    #     func=custom_rewards.lateral_oscillation_penalty,
-    #     weight=config.REWARDS['lateral_oscillation']['weight'], #-0.20,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot"),
-    #     },
-    # )
+    lateral_oscillation = RewTerm(
+        func=custom_rewards.lateral_oscillation_penalty,
+        weight=config.REWARDS['lateral_oscillation']['weight'], #-0.20,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
 
 
     map_collision = RewTerm(
@@ -380,21 +380,21 @@ class RewardsCfg:
         },
     )
 
-    # action_smoothness = RewTerm(
-    #     func=custom_rewards.action_smoothness_penalty,
-    #     weight=config.REWARDS['action_smoothness']['weight'],
-    # )
+    action_smoothness = RewTerm(
+        func=custom_rewards.action_smoothness_penalty,
+        weight=config.REWARDS['action_smoothness']['weight'],
+    )
 
-    # yaw_rate = RewTerm(
-    #     func=custom_rewards.yaw_rate_penalty,
-    #     weight=config.REWARDS['yaw_rate']['weight'], #-0.02,
-    # )
+    yaw_rate = RewTerm(
+        func=custom_rewards.yaw_rate_penalty,
+        weight=config.REWARDS['yaw_rate']['weight'], #-0.02,
+    )
 
-    # path_velocity = RewTerm(
-    #     func=custom_rewards.path_velocity_reward,
-    #     weight=config.REWARDS['path_velocity']['weight'], #3.0,
-    #     params={"asset_cfg": SceneEntityCfg("robot")},
-    # )
+    path_velocity = RewTerm(
+        func=custom_rewards.path_velocity_reward,
+        weight=config.REWARDS['path_velocity']['weight'], #3.0,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
 
     time = RewTerm(
         func=custom_rewards.time_penalty,
@@ -407,36 +407,36 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot"), "speed_threshold": config.REWARDS['no_wait']['speed_threshold']},
     )
 
-    # static_velocity_clearance = RewTerm(
-    #     func=custom_rewards.static_velocity_clearance_penalty,
-    #     weight=config.REWARDS['static_velocity_clearance']['weight'],
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot"),
-    #         "safe_distance": config.REWARDS['static_velocity_clearance']['safe_distance'],
-    #         "max_range": config.REWARDS['static_velocity_clearance']['max_range'],
-    #         "num_rays": config.REWARDS['static_velocity_clearance']['num_rays'],
-    #         "sector_half_angle_rad": config.REWARDS['static_velocity_clearance']['sector_half_angle_rad'],
-    #         "min_speed": config.REWARDS['static_velocity_clearance']['min_speed'],
-    #     },
-    # )
-    # start_speed = RewTerm(
-    #     func=custom_rewards.start_speed_penalty,
-    #     weight=config.REWARDS['start_speed']['weight'],
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot"),
-    #         "warmup_s": config.REWARDS['start_speed']['warmup_s'],
-    #     },
-    # )
-
-    # lateral_bypass = RewTerm(
-    #     func=custom_rewards.lateral_bypass_reward,
-    #     weight=config.REWARDS['lateral_bypass']['weight'],
-    #     params={"asset_cfg": SceneEntityCfg("robot"), "max_cte": config.REWARDS['lateral_bypass']['max_cte']},
-    # )
-    mppi_imitation = RewTerm(
-        func=custom_rewards.mppi_teacher_imitation_reward,
-        weight=config.REWARDS['mppi_imitation']['weight'],
+    static_velocity_clearance = RewTerm(
+        func=custom_rewards.static_velocity_clearance_penalty,
+        weight=config.REWARDS['static_velocity_clearance']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "safe_distance": config.REWARDS['static_velocity_clearance']['safe_distance'],
+            "max_range": config.REWARDS['static_velocity_clearance']['max_range'],
+            "num_rays": config.REWARDS['static_velocity_clearance']['num_rays'],
+            "sector_half_angle_rad": config.REWARDS['static_velocity_clearance']['sector_half_angle_rad'],
+            "min_speed": config.REWARDS['static_velocity_clearance']['min_speed'],
+        },
     )
+    start_speed = RewTerm(
+        func=custom_rewards.start_speed_penalty,
+        weight=config.REWARDS['start_speed']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "warmup_s": config.REWARDS['start_speed']['warmup_s'],
+        },
+    )
+
+    lateral_bypass = RewTerm(
+        func=custom_rewards.lateral_bypass_reward,
+        weight=config.REWARDS['lateral_bypass']['weight'],
+        params={"asset_cfg": SceneEntityCfg("robot"), "max_cte": config.REWARDS['lateral_bypass']['max_cte']},
+    )
+    # mppi_imitation = RewTerm(
+    #     func=custom_rewards.mppi_teacher_imitation_reward,
+    #     weight=config.REWARDS['mppi_imitation']['weight'],
+    # )
 
 @configclass
 class TerminationsCfg:
@@ -528,6 +528,9 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     fixed_curriculum_level: int = -1
     curriculum_perf_window: int = 5000
     curriculum_min_samples: int = 4500
+    sample_curriculum_levels: bool = True
+    curriculum_sample_min_level: int = 0
+    curriculum_sample_max_level: int = 1
 
     curriculum_success_promote: float = 0.70
     curriculum_map_collision_promote: float = 0.20

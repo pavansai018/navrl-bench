@@ -314,7 +314,25 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
         env.navrl_curriculum_level[env_ids] = fixed_level
     else:
         _ensure_performance_curriculum_buffers(env)
-        env.navrl_curriculum_level[env_ids] = int(env.navrl_curriculum_level_global)
+        # env.navrl_curriculum_level[env_ids] = int(env.navrl_curriculum_level_global)
+        global_level = int(env.navrl_curriculum_level_global)
+
+        if bool(getattr(env.cfg, "sample_curriculum_levels", False)):
+            min_level = int(getattr(env.cfg, "curriculum_sample_min_level", 0))
+            max_level_cfg = int(getattr(env.cfg, "curriculum_sample_max_level", global_level))
+
+            # Use the smaller of configured max and adaptive global level,
+            # unless you are manually forcing a staged max.
+            max_level = max(min_level, max_level_cfg)
+
+            env.navrl_curriculum_level[env_ids] = torch.randint(
+                low=min_level,
+                high=max_level + 1,
+                size=(len(env_ids),),
+                device=env.device,
+            )
+        else:
+            env.navrl_curriculum_level[env_ids] = global_level
     env.navrl_reset_count[env_ids] += 1
     reset_domain_randomization(env, env_ids, asset_cfg=asset_cfg)
 
@@ -610,18 +628,46 @@ def draw_nav2_map_path_scan_debug(
                 [(0.0, 0.3, 1.0, 1.0)] * len(all_p0),
                 [3.0] * len(all_p0),
             )
+    # if draw_dyn and hasattr(env, "dyn_obs_xy"):
+    #     points, sizes = [], []
+    #     for eid_t in draw_env_ids:
+    #         eid = int(eid_t.item())
+    #         origin = env.scene.env_origins[eid, :2]
+    #         active_ids = torch.nonzero(env.dyn_obs_active[eid], as_tuple=False).flatten()
+    #         for oid in active_ids:
+    #             p = env.dyn_obs_xy[eid, oid] + origin
+    #             points.append((float(p[0].item()), float(p[1].item()), 0.35))
+    #             sizes.append(float(max(8.0, env.dyn_obs_radius[eid, oid].item() * 60.0)))
+    #     if len(points) > 0:
+    #         draw.draw_points(points, [(1.0, 0.45, 0.0, 1.0)] * len(points), sizes)
     if draw_dyn and hasattr(env, "dyn_obs_xy"):
-        points, sizes = [], []
+        center_points = []
+        circle_p0 = []
+        circle_p1 = []
+
+        num_circle_segments = 32
+        circle_angles = torch.linspace(0.0,2.0 * math.pi,num_circle_segments + 1,device=device,)
+
         for eid_t in draw_env_ids:
             eid = int(eid_t.item())
             origin = env.scene.env_origins[eid, :2]
             active_ids = torch.nonzero(env.dyn_obs_active[eid], as_tuple=False).flatten()
+
             for oid in active_ids:
-                p = env.dyn_obs_xy[eid, oid] + origin
-                points.append((float(p[0].item()), float(p[1].item()), 0.35))
-                sizes.append(float(max(8.0, env.dyn_obs_radius[eid, oid].item() * 60.0)))
-        if len(points) > 0:
-            draw.draw_points(points, [(1.0, 0.45, 0.0, 1.0)] * len(points), sizes)
+                center = env.dyn_obs_xy[eid, oid] + origin
+                radius = env.dyn_obs_radius[eid, oid]
+                center_points.append((float(center[0].item()),float(center[1].item()),0.35,))
+                xs = center[0] + torch.cos(circle_angles) * radius
+                ys = center[1] + torch.sin(circle_angles) * radius
+                for k in range(num_circle_segments):
+                    circle_p0.append((float(xs[k].item()),float(ys[k].item()),0.32,))
+                    circle_p1.append((float(xs[k + 1].item()),float(ys[k + 1].item()),0.32,))
+
+        if len(circle_p0) > 0:
+            draw.draw_lines(circle_p0,circle_p1,[(1.0, 0.45, 0.0, 1.0)] * len(circle_p0),[2.0] * len(circle_p0),)
+
+        if len(center_points) > 0:
+            draw.draw_points(center_points,[(1.0, 0.8, 0.0, 1.0)] * len(center_points),[5.0] * len(center_points),)
 
     # Goal points for all envs
     if hasattr(env, "navrl_final_goal_xy"):

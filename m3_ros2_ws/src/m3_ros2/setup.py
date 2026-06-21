@@ -48,6 +48,8 @@ setup(
             'keyboard_control = m3_ros2.keyboard_controller:main',
             'rl_control = m3_ros2.rl_local_controller:main',
             'replay_pose = m3_ros2.npz_path_to_plan:main',
+            'odom_tf = m3_ros2.odom_to_tf:main',
+
 
 
         ],

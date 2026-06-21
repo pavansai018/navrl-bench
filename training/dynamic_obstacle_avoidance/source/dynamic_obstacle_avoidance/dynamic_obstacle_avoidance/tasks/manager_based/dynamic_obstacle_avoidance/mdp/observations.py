@@ -285,7 +285,8 @@ def dynamic_obstacle_scan(env, num_rays: int = 360, max_range: float = 4.0) -> t
     yaw = _robot_yaw(env)
     device = env.device
 
-    ray_angles = torch.linspace(-math.pi, math.pi, num_rays, device=device)
+    # ray_angles = torch.linspace(-math.pi, math.pi, num_rays, device=device)
+    ray_angles = torch.linspace(-math.pi, math.pi,num_rays + 1,device=device,)[:-1]
     world_angles = yaw[:, None] + ray_angles[None, :]
     ray_dir = torch.stack([torch.cos(world_angles), torch.sin(world_angles)], dim=-1)  # [E, R, 2]
 

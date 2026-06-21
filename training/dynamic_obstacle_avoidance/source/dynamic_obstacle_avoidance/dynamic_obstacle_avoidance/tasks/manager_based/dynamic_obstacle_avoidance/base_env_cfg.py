@@ -139,20 +139,20 @@ class ObservationsCfg:
             params=config.OBSERVATIONS['actor']['combined_scan']['params'],
         )
 
-        dynamic_obstacles = ObsTerm(
-            func=custom_observations.dynamic_obstacle_states,
-            params=config.OBSERVATIONS['actor']['dynamic_obstacles']['params'],
-        )
+        # dynamic_obstacles = ObsTerm(
+        #     func=custom_observations.dynamic_obstacle_states,
+        #     params=config.OBSERVATIONS['actor']['dynamic_obstacles']['params'],
+        # )
 
-        path_blocked = ObsTerm(
-            func=custom_observations.dynamic_path_blockage,
-            params=config.OBSERVATIONS['actor']['path_blocked']['params'],
-        )
+        # path_blocked = ObsTerm(
+        #     func=custom_observations.dynamic_path_blockage,
+        #     params=config.OBSERVATIONS['actor']['path_blocked']['params'],
+        # )
 
-        time_to_closest_approach = ObsTerm(
-            func=custom_observations.time_to_closest_approach,
-            params=config.OBSERVATIONS['actor']['time_to_closest_approach']['params'],
-        )
+        # time_to_closest_approach = ObsTerm(
+        #     func=custom_observations.time_to_closest_approach,
+        #     params=config.OBSERVATIONS['actor']['time_to_closest_approach']['params'],
+        # )
 
         # Robot motion
         base_lin_vel = ObsTerm(func=custom_observations.base_lin_vel)
@@ -433,7 +433,10 @@ class RewardsCfg:
         weight=config.REWARDS['lateral_bypass']['weight'],
         params={"asset_cfg": SceneEntityCfg("robot"), "max_cte": config.REWARDS['lateral_bypass']['max_cte']},
     )
-
+    # mppi_imitation = RewTerm(
+    #     func=custom_rewards.mppi_teacher_imitation_reward,
+    #     weight=config.REWARDS['mppi_imitation']['weight'],
+    # )
 
 @configclass
 class TerminationsCfg:
@@ -491,6 +494,7 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     nav2_path_dataset_dir: str = config.nav2_path_dataset_dir
     nav2_map_yaml_path: str = config.nav2_map_yaml_path
+    mppi_teacher: dict = config.MPPI_TEACHER
 
     # Tensor dynamic obstacle/curriculum configuration.
     max_dynamic_obstacles: int = 6
@@ -524,6 +528,9 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     fixed_curriculum_level: int = -1
     curriculum_perf_window: int = 5000
     curriculum_min_samples: int = 4500
+    sample_curriculum_levels: bool = True
+    curriculum_sample_min_level: int = 0
+    curriculum_sample_max_level: int = 1
 
     curriculum_success_promote: float = 0.70
     curriculum_map_collision_promote: float = 0.20

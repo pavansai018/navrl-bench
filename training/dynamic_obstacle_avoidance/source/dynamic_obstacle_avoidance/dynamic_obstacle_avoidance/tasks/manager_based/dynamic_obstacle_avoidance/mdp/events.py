@@ -314,7 +314,25 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
         env.navrl_curriculum_level[env_ids] = fixed_level
     else:
         _ensure_performance_curriculum_buffers(env)
-        env.navrl_curriculum_level[env_ids] = int(env.navrl_curriculum_level_global)
+        # env.navrl_curriculum_level[env_ids] = int(env.navrl_curriculum_level_global)
+        global_level = int(env.navrl_curriculum_level_global)
+
+        if bool(getattr(env.cfg, "sample_curriculum_levels", False)):
+            min_level = int(getattr(env.cfg, "curriculum_sample_min_level", 0))
+            max_level_cfg = int(getattr(env.cfg, "curriculum_sample_max_level", global_level))
+
+            # Use the smaller of configured max and adaptive global level,
+            # unless you are manually forcing a staged max.
+            max_level = max(min_level, max_level_cfg)
+
+            env.navrl_curriculum_level[env_ids] = torch.randint(
+                low=min_level,
+                high=max_level + 1,
+                size=(len(env_ids),),
+                device=env.device,
+            )
+        else:
+            env.navrl_curriculum_level[env_ids] = global_level
     env.navrl_reset_count[env_ids] += 1
     reset_domain_randomization(env, env_ids, asset_cfg=asset_cfg)
 

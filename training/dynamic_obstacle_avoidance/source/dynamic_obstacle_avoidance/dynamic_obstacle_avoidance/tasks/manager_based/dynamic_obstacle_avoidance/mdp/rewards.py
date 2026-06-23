@@ -226,6 +226,16 @@ def time_penalty(env) -> torch.Tensor:
     return torch.ones(env.num_envs, device=env.device)
 
 
+# def no_wait_penalty(env, asset_cfg: SceneEntityCfg, speed_threshold: float = 0.10) -> torch.Tensor:
+#     robot = env.scene[asset_cfg.name]
+#     speed = torch.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
+#     goal_dist = torch.norm(env.navrl_final_goal_xy - _robot_xy(env, asset_cfg.name), dim=-1)
+
+#     not_goal = (goal_dist > 0.35).float()
+#     stopped = (speed < speed_threshold).float()
+
+#     return stopped * not_goal
+
 def no_wait_penalty(env, asset_cfg: SceneEntityCfg, speed_threshold: float = 0.10) -> torch.Tensor:
     robot = env.scene[asset_cfg.name]
     speed = torch.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
@@ -234,7 +244,18 @@ def no_wait_penalty(env, asset_cfg: SceneEntityCfg, speed_threshold: float = 0.1
     not_goal = (goal_dist > 0.35).float()
     stopped = (speed < speed_threshold).float()
 
-    return stopped * not_goal
+    result = stopped * not_goal
+
+    # Do not punish yielding when a dynamic obstacle blocks the near-future path.
+    # Otherwise PPO is pushed to keep moving into the obstacle.
+    valid_dyn_block, _, _, _, _ = _dynamic_corridor_obstacle_info(env, asset_cfg)
+
+    if hasattr(env, "navrl_path_blocked"):
+        blocked = torch.maximum(env.navrl_path_blocked.float(), valid_dyn_block.float())
+    else:
+        blocked = valid_dyn_block.float()
+
+    return result * (1.0 - blocked)
 
 
 def path_velocity_reward(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
@@ -397,3 +418,327 @@ def mppi_teacher_imitation_reward(env) -> torch.Tensor:
 
 def _event_scale(env) -> float:
     return 1.0 / max(float(getattr(env, "step_dt", 1.0 / 30.0)), 1.0e-6)
+
+
+# -----------------------------------------------------------------------------
+# Dynamic obstacle mode rewards
+# Actor remains scan/path/velocity only.
+# These use simulator dynamic obstacle buffers only for reward credit assignment.
+# -----------------------------------------------------------------------------
+
+def _dynamic_corridor_obstacle_info(
+    env,
+    asset_cfg: SceneEntityCfg,
+    lookahead_m: float = 2.0,
+    corridor_half_width: float = 0.55,
+):
+    """
+    Nearest active dynamic obstacle in the near-future path corridor.
+
+    This is reward-only. It is not added to actor observation.
+    """
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    _, _, tangent, normal = _path_tangent_normal(env, robot_xy, lookahead=4)
+
+    if not hasattr(env, "dyn_obs_xy") or not hasattr(env, "dyn_obs_active"):
+        valid = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        large = torch.ones(env.num_envs, device=env.device) * 1.0e6
+        lat = torch.zeros(env.num_envs, device=env.device)
+        return valid, large, lat, tangent, normal
+
+    rel = env.dyn_obs_xy - robot_xy[:, None, :]  # [env, obstacle, 2]
+
+    along = torch.sum(rel * tangent[:, None, :], dim=-1)
+    lateral = torch.sum(rel * normal[:, None, :], dim=-1)
+    dist = torch.norm(rel, dim=-1)
+
+    in_corridor = (
+        env.dyn_obs_active
+        & (along > -0.25)
+        & (along < lookahead_m)
+        & (torch.abs(lateral) < corridor_half_width)
+    )
+
+    masked_dist = torch.where(in_corridor, dist, torch.ones_like(dist) * 1.0e6)
+
+    nearest_idx = torch.argmin(masked_dist, dim=-1)
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    nearest_dist = masked_dist[env_ids, nearest_idx]
+    nearest_lat = lateral[env_ids, nearest_idx]
+
+    valid = nearest_dist < 1.0e5
+
+    return valid, nearest_dist, nearest_lat, tangent, normal
+
+
+def _static_clearance_in_world_direction(
+    env,
+    robot_xy: torch.Tensor,
+    world_yaw: torch.Tensor,
+    max_range: float = 1.2,
+    num_rays: int = 72,
+    sector_half_angle_rad: float = 0.35,
+) -> torch.Tensor:
+    """
+    Static-map clearance centered on a world-frame direction.
+    Used only for reward gating.
+    """
+    scan = env.nav2_occupancy_map.raycast_scan(
+        robot_xy=robot_xy,
+        robot_yaw=world_yaw,
+        num_rays=num_rays,
+        max_range=max_range,
+        step_size=0.05,
+    )
+
+    scan_m = scan * max_range
+
+    ray_angles = torch.linspace(
+        -math.pi,
+        math.pi,
+        num_rays + 1,
+        device=env.device,
+        dtype=robot_xy.dtype,
+    )[:-1]
+
+    sector_mask = torch.abs(ray_angles) <= sector_half_angle_rad
+
+    return scan_m[:, sector_mask].min(dim=-1).values
+
+
+def _path_side_static_clearance(
+    env,
+    asset_cfg: SceneEntityCfg,
+    max_range: float = 1.2,
+    num_rays: int = 72,
+    sector_half_angle_rad: float = 0.35,
+):
+    """
+    Static clearance on path-left and path-right.
+    """
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    _, _, _, normal = _path_tangent_normal(env, robot_xy, lookahead=4)
+
+    left_yaw = torch.atan2(normal[:, 1], normal[:, 0])
+    right_yaw = torch.atan2(-normal[:, 1], -normal[:, 0])
+
+    left_clear = _static_clearance_in_world_direction(
+        env,
+        robot_xy,
+        left_yaw,
+        max_range=max_range,
+        num_rays=num_rays,
+        sector_half_angle_rad=sector_half_angle_rad,
+    )
+
+    right_clear = _static_clearance_in_world_direction(
+        env,
+        robot_xy,
+        right_yaw,
+        max_range=max_range,
+        num_rays=num_rays,
+        sector_half_angle_rad=sector_half_angle_rad,
+    )
+
+    return left_clear, right_clear
+
+
+def wall_aware_dynamic_bypass_reward(
+    env,
+    asset_cfg: SceneEntityCfg,
+    lookahead_m: float = 2.0,
+    corridor_half_width: float = 0.55,
+    min_side_clearance: float = 0.45,
+    max_lateral_speed: float = 0.5,
+    max_separation_gain: float = 0.05,
+) -> torch.Tensor:
+    """
+    Reward lateral bypass only when:
+    1. dynamic obstacle blocks future path corridor
+    2. selected side has wall clearance
+    3. robot moves away from obstacle / toward clearer side
+    """
+    valid, nearest_dist, obstacle_lat, _, normal = _dynamic_corridor_obstacle_info(
+        env,
+        asset_cfg,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+    )
+
+    if not torch.any(valid):
+        return torch.zeros(env.num_envs, device=env.device)
+
+    left_clear, right_clear = _path_side_static_clearance(env, asset_cfg)
+
+    left_free = left_clear > min_side_clearance
+    right_free = right_clear > min_side_clearance
+    side_available = left_free | right_free
+
+    robot = env.scene[asset_cfg.name]
+    vel_w = robot.data.root_lin_vel_w[:, :2]
+
+    v_lat = torch.sum(vel_w * normal, dim=-1)
+
+    moving_left = v_lat > 0.03
+    moving_right = v_lat < -0.03
+
+    obs_left = obstacle_lat > 0.05
+    obs_right = obstacle_lat < -0.05
+    obs_center = ~(obs_left | obs_right)
+
+    # If obstacle is left of path, prefer right.
+    # If obstacle is right of path, prefer left.
+    # If centered, prefer clearer side.
+    prefer_left = (
+        (obs_right & left_free)
+        | (obs_center & left_free & (left_clear >= right_clear))
+        | (left_free & ~right_free)
+    )
+
+    prefer_right = (
+        (obs_left & right_free)
+        | (obs_center & right_free & (right_clear > left_clear))
+        | (right_free & ~left_free)
+    )
+
+    correct_side = (prefer_left & moving_left) | (prefer_right & moving_right)
+
+    lateral_speed = torch.clamp(torch.abs(v_lat) / max_lateral_speed, 0.0, 1.0)
+
+    if not hasattr(env, "navrl_prev_corridor_dyn_dist"):
+        env.navrl_prev_corridor_dyn_dist = nearest_dist.clone()
+
+    new_episode = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    if hasattr(env, "episode_step_count"):
+        new_episode = env.episode_step_count <= 1
+
+    prev = torch.where(
+        new_episode | (~valid),
+        nearest_dist,
+        env.navrl_prev_corridor_dyn_dist,
+    )
+
+    separation_gain = nearest_dist - prev
+
+    env.navrl_prev_corridor_dyn_dist[:] = torch.where(
+        valid,
+        nearest_dist,
+        env.navrl_prev_corridor_dyn_dist,
+    )
+
+    sep_score = 0.5 + 0.5 * torch.clamp(
+        separation_gain / max_separation_gain,
+        0.0,
+        1.0,
+    )
+
+    return (
+        valid.float()
+        * side_available.float()
+        * correct_side.float()
+        * lateral_speed
+        * sep_score
+    )
+
+
+def dynamic_yield_when_no_side_space_reward(
+    env,
+    asset_cfg: SceneEntityCfg,
+    lookahead_m: float = 2.0,
+    corridor_half_width: float = 0.55,
+    min_side_clearance: float = 0.45,
+    max_vx: float = 0.5,
+    max_vy: float = 0.5,
+) -> torch.Tensor:
+    """
+    If dynamic obstacle blocks the path and both sides are walls,
+    reward yielding/slowing instead of impossible lateral bypass.
+    """
+    valid, _, _, tangent, normal = _dynamic_corridor_obstacle_info(
+        env,
+        asset_cfg,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+    )
+
+    left_clear, right_clear = _path_side_static_clearance(env, asset_cfg)
+
+    no_side_space = (left_clear <= min_side_clearance) & (right_clear <= min_side_clearance)
+
+    robot = env.scene[asset_cfg.name]
+    vel_w = robot.data.root_lin_vel_w[:, :2]
+
+    v_path = torch.sum(vel_w * tangent, dim=-1)
+    v_lat = torch.sum(vel_w * normal, dim=-1)
+
+    forward = torch.clamp(v_path / max_vx, 0.0, 1.0)
+    lateral = torch.clamp(torch.abs(v_lat) / max_vy, 0.0, 1.0)
+
+    yield_score = (1.0 - forward) * (1.0 - 0.5 * lateral)
+
+    return valid.float() * no_side_space.float() * torch.clamp(yield_score, 0.0, 1.0)
+
+
+def dynamic_forward_blocked_penalty(
+    env,
+    asset_cfg: SceneEntityCfg,
+    lookahead_m: float = 2.0,
+    corridor_half_width: float = 0.55,
+    max_vx: float = 0.5,
+) -> torch.Tensor:
+    """
+    Penalize continuing forward into a dynamically blocked corridor.
+    """
+    valid, _, _, tangent, _ = _dynamic_corridor_obstacle_info(
+        env,
+        asset_cfg,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+    )
+
+    robot = env.scene[asset_cfg.name]
+    vel_w = robot.data.root_lin_vel_w[:, :2]
+
+    v_path = torch.sum(vel_w * tangent, dim=-1)
+    forward = torch.clamp(v_path / max_vx, 0.0, 1.0)
+
+    return valid.float() * forward
+
+
+def dynamic_bad_lateral_penalty(
+    env,
+    asset_cfg: SceneEntityCfg,
+    lookahead_m: float = 2.0,
+    corridor_half_width: float = 0.55,
+    min_side_clearance: float = 0.45,
+    max_vy: float = 0.5,
+) -> torch.Tensor:
+    """
+    Penalize strafing into the blocked wall side during dynamic blockage.
+    """
+    valid, _, _, _, normal = _dynamic_corridor_obstacle_info(
+        env,
+        asset_cfg,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+    )
+
+    left_clear, right_clear = _path_side_static_clearance(env, asset_cfg)
+
+    left_blocked = left_clear <= min_side_clearance
+    right_blocked = right_clear <= min_side_clearance
+
+    robot = env.scene[asset_cfg.name]
+    vel_w = robot.data.root_lin_vel_w[:, :2]
+
+    v_lat = torch.sum(vel_w * normal, dim=-1)
+
+    moving_left = v_lat > 0.03
+    moving_right = v_lat < -0.03
+
+    bad = (moving_left & left_blocked) | (moving_right & right_blocked)
+
+    lateral_speed = torch.clamp(torch.abs(v_lat) / max_vy, 0.0, 1.0)
+
+    return valid.float() * bad.float() * lateral_speed

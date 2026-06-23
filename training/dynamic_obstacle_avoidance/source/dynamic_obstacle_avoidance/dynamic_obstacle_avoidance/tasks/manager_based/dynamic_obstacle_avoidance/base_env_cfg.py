@@ -437,15 +437,63 @@ class RewardsCfg:
         },
     )
 
-    lateral_bypass = RewTerm(
-        func=custom_rewards.lateral_bypass_reward,
-        weight=config.REWARDS['lateral_bypass']['weight'],
-        params={"asset_cfg": SceneEntityCfg("robot"), "max_cte": config.REWARDS['lateral_bypass']['max_cte']},
-    )
+    # lateral_bypass = RewTerm(
+    #     func=custom_rewards.lateral_bypass_reward,
+    #     weight=config.REWARDS['lateral_bypass']['weight'],
+    #     params={"asset_cfg": SceneEntityCfg("robot"), "max_cte": config.REWARDS['lateral_bypass']['max_cte']},
+    # )
     # mppi_imitation = RewTerm(
     #     func=custom_rewards.mppi_teacher_imitation_reward,
     #     weight=config.REWARDS['mppi_imitation']['weight'],
     # )
+
+    wall_aware_dynamic_bypass = RewTerm(
+        func=custom_rewards.wall_aware_dynamic_bypass_reward,
+        weight=config.REWARDS['wall_aware_dynamic_bypass']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "lookahead_m": config.REWARDS['wall_aware_dynamic_bypass']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['wall_aware_dynamic_bypass']['corridor_half_width'],
+            "min_side_clearance": config.REWARDS['wall_aware_dynamic_bypass']['min_side_clearance'],
+            "max_lateral_speed": config.ACTIONS['max_vy'],
+        },
+    )
+
+    dynamic_yield_no_side_space = RewTerm(
+        func=custom_rewards.dynamic_yield_when_no_side_space_reward,
+        weight=config.REWARDS['dynamic_yield_no_side_space']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "lookahead_m": config.REWARDS['dynamic_yield_no_side_space']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['dynamic_yield_no_side_space']['corridor_half_width'],
+            "min_side_clearance": config.REWARDS['dynamic_yield_no_side_space']['min_side_clearance'],
+            "max_vx": config.ACTIONS['max_vx'],
+            "max_vy": config.ACTIONS['max_vy'],
+        },
+    )
+
+    dynamic_forward_blocked = RewTerm(
+        func=custom_rewards.dynamic_forward_blocked_penalty,
+        weight=config.REWARDS['dynamic_forward_blocked']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "lookahead_m": config.REWARDS['dynamic_forward_blocked']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['dynamic_forward_blocked']['corridor_half_width'],
+            "max_vx": config.ACTIONS['max_vx'],
+        },
+    )
+
+    dynamic_bad_lateral = RewTerm(
+        func=custom_rewards.dynamic_bad_lateral_penalty,
+        weight=config.REWARDS['dynamic_bad_lateral']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "lookahead_m": config.REWARDS['dynamic_bad_lateral']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['dynamic_bad_lateral']['corridor_half_width'],
+            "min_side_clearance": config.REWARDS['dynamic_bad_lateral']['min_side_clearance'],
+            "max_vy": config.ACTIONS['max_vy'],
+        },
+    )
 
 @configclass
 class TerminationsCfg:
@@ -535,11 +583,11 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
 
     curriculum_max_level: int = -1 #len(custom_events.read_config()['domain_randomization_stages'] + custom_events.read_config()['obstacle_stages'])
     fixed_curriculum_level: int = -1
-    curriculum_perf_window: int = 5000
-    curriculum_min_samples: int = 4500
+    curriculum_perf_window: int = 100000
+    curriculum_min_samples: int = 90000
     sample_curriculum_levels: bool = True
     curriculum_sample_min_level: int = 0
-    curriculum_sample_max_level: int = 1
+    curriculum_sample_max_level: int = 10
 
     curriculum_success_promote: float = 0.70
     curriculum_map_collision_promote: float = 0.20

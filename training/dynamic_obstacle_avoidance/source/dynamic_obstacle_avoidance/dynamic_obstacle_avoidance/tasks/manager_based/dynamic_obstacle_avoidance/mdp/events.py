@@ -925,7 +925,15 @@ def update_performance_curriculum_on_reset(env, env_ids: torch.Tensor):
         env.navrl_perf_filled = 0
 
     elif demote:
-        env.navrl_curriculum_level_global = max(env.navrl_curriculum_level_global - 1, 0)
+        if bool(getattr(env.cfg, "sample_curriculum_levels", False)):
+            floor_level = int(getattr(env.cfg, "curriculum_sample_min_level", 0))
+        else:
+            floor_level = 0
+
+        env.navrl_curriculum_level_global = max(
+            env.navrl_curriculum_level_global - 1,
+            floor_level,
+        )
         env.navrl_perf_success.zero_()
         env.navrl_perf_map_collision.zero_()
         env.navrl_perf_dynamic_collision.zero_()
@@ -933,8 +941,11 @@ def update_performance_curriculum_on_reset(env, env_ids: torch.Tensor):
         env.navrl_perf_idx = 0
         env.navrl_perf_filled = 0
 
-    # Your obstacle reset code must read this level.
-    env.navrl_curriculum_level[:] = int(env.navrl_curriculum_level_global)
+    # Only overwrite all env levels when NOT using sampled curriculum.
+    # If sample_curriculum_levels=True, reset_dynamic_obstacles_tensor()
+    # will assign levels only for the resetting env_ids.
+    if not bool(getattr(env.cfg, "sample_curriculum_levels", False)):
+        env.navrl_curriculum_level[:] = int(env.navrl_curriculum_level_global)
 
 def reset_domain_randomization(env, env_ids: torch.Tensor, asset_cfg: SceneEntityCfg | None = None):
     _ensure_domain_randomization_buffers(env)

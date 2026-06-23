@@ -14,11 +14,20 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 8000
     save_interval = 200
     experiment_name = "m3_obstacle_avoidance"
+    # policy = RslRlPpoActorCriticCfg(
+    #     init_noise_std=0.1, #1.0,
+    #     actor_obs_normalization=True, #False,
+    #     critic_obs_normalization=True, #False,
+    #     actor_hidden_dims=[256, 256, 128],
+    #     critic_hidden_dims=[256, 256, 128],
+    #     activation="elu",
+    # )
     policy = RslRlPpoActorCriticCfg(
-        init_noise_std=0.1, #1.0,
-        actor_obs_normalization=True, #False,
-        critic_obs_normalization=True, #False,
-        actor_hidden_dims=[256, 256, 128],
+        class_name="ActorCriticScanTransformer",
+        init_noise_std=0.3,
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
+        actor_hidden_dims=[256, 128],
         critic_hidden_dims=[256, 256, 128],
         activation="elu",
     )

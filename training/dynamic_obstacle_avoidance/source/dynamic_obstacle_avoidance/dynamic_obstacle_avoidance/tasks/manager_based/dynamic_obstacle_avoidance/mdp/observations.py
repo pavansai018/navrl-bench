@@ -330,6 +330,40 @@ def combined_static_dynamic_scan(env, num_rays: int = 360, max_range: float = 4.
     scan = _apply_scan_domain_randomization(env, scan)
     return scan
 
+def scan_history(
+    env,
+    history_len: int = 8,
+    num_rays: int = 144,
+    max_range: float = 10.0,
+    step_size: float = 0.10,
+) -> torch.Tensor:
+    """Temporal scan stack for transformer actor.
+
+    Output:
+        [num_envs, history_len * num_rays]
+
+    Convention is same as combined_static_dynamic_scan:
+        1.0 = far / no hit
+        0.0 = close obstacle
+    """
+
+    scan = combined_static_dynamic_scan(
+        env,
+        num_rays=num_rays,
+        max_range=max_range,
+        step_size=step_size,
+    )
+
+    if (
+        not hasattr(env, "navrl_scan_history")
+        or env.navrl_scan_history.shape != (env.num_envs, history_len, num_rays)
+    ):
+        env.navrl_scan_history = scan[:, None, :].repeat(1, history_len, 1)
+
+    env.navrl_scan_history = torch.roll(env.navrl_scan_history, shifts=-1, dims=1)
+    env.navrl_scan_history[:, -1, :] = scan
+
+    return env.navrl_scan_history.reshape(env.num_envs, history_len * num_rays)
 
 def dynamic_obstacle_states(env, num_obstacles: int = 4, max_range: float = 4.0) -> torch.Tensor:
     """Nearest dynamic obstacles in robot frame: [x, y, vx, vy, radius, active] per obstacle.

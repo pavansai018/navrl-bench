@@ -67,6 +67,7 @@ import time
 import gymnasium as gym
 import torch
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
+import rsl_rl.runners.on_policy_runner as rsl_on_policy_runner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -92,6 +93,15 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import dynamic_obstacle_avoidance.tasks  # type: ignore # noqa: F401
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from scan_transformer_actor_critic import ActorCriticScanTransformer
+
+rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -163,6 +173,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # Some IsaacLab versions add this key, but my installed rsl_rl PPO does not accept it.
         agent_cfg_dict["algorithm"].pop("share_cnn_encoders", None)
         # runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
         runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=log_dir, device=agent_cfg.device)
 
     elif agent_cfg.class_name == "DistillationRunner":
@@ -197,8 +208,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             normalizer = None
 
         # export to JIT and ONNX
-        export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
-        export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
+        # export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
+        # export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
     dt = env.unwrapped.step_dt
 

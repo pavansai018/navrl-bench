@@ -337,31 +337,56 @@ def scan_history(
     max_range: float = 10.0,
     step_size: float = 0.10,
 ) -> torch.Tensor:
-    """Temporal scan stack for transformer actor.
+    """Cached scan history.
 
-    Output:
-        [num_envs, history_len * num_rays]
+    Policy and critic both use scan_history.
+    Without caching, the scan is recomputed and rolled twice per env step.
 
-    Convention is same as combined_static_dynamic_scan:
-        1.0 = far / no hit
-        0.0 = close obstacle
+    This function updates only once per env step and returns the same flattened
+    history to both policy and critic.
     """
 
-    scan = combined_static_dynamic_scan(
-        env,
-        num_rays=num_rays,
-        max_range=max_range,
-        step_size=step_size,
+    device = env.device
+    expected_shape = (env.num_envs, history_len, num_rays)
+
+    step_id = int(env.common_step_counter)
+
+    need_init = (
+        not hasattr(env, "navrl_scan_history")
+        or env.navrl_scan_history.shape != expected_shape
+        or env.navrl_scan_history.device != device
     )
 
-    if (
-        not hasattr(env, "navrl_scan_history")
-        or env.navrl_scan_history.shape != (env.num_envs, history_len, num_rays)
-    ):
-        env.navrl_scan_history = scan[:, None, :].repeat(1, history_len, 1)
+    if need_init:
+        scan = combined_static_dynamic_scan(
+            env,
+            num_rays=num_rays,
+            max_range=max_range,
+            step_size=step_size,
+        )
 
-    env.navrl_scan_history = torch.roll(env.navrl_scan_history, shifts=-1, dims=1)
-    env.navrl_scan_history[:, -1, :] = scan
+        env.navrl_scan_history = scan[:, None, :].repeat(1, history_len, 1)
+        env.navrl_scan_history_last_step = step_id
+
+        return env.navrl_scan_history.reshape(env.num_envs, history_len * num_rays)
+
+    last_step = getattr(env, "navrl_scan_history_last_step", -1)
+
+    if last_step != step_id:
+        scan = combined_static_dynamic_scan(
+            env,
+            num_rays=num_rays,
+            max_range=max_range,
+            step_size=step_size,
+        )
+
+        env.navrl_scan_history = torch.roll(
+            env.navrl_scan_history,
+            shifts=-1,
+            dims=1,
+        )
+        env.navrl_scan_history[:, -1, :] = scan
+        env.navrl_scan_history_last_step = step_id
 
     return env.navrl_scan_history.reshape(env.num_envs, history_len * num_rays)
 

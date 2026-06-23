@@ -6,7 +6,7 @@ import torch
 from .path_dataset import Nav2PathDataset
 from .nav2_map import Nav2OccupancyMap
 from isaaclab.managers import SceneEntityCfg
-from .observations import map_collision_direction_flags, combined_static_dynamic_scan
+from .observations import map_collision_direction_flags, combined_static_dynamic_scan, dynamic_path_blockage
 from . import config
 
 def _ensure_nav2_path_buffers(env, max_path_points: int = 600):
@@ -514,7 +514,12 @@ def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
     dist = torch.norm(rel, dim=-1)
     far = dist > float(getattr(env.cfg, "dynamic_obstacle_deactivate_range", 6.0))
     env.dyn_obs_active[env_ids] = env.dyn_obs_active[env_ids] & (~far)
-
+    if hasattr(env, "navrl_global_path_xy"):
+        dynamic_path_blockage(
+            env,
+            lookahead_points=config.OBSERVATIONS["actor"]["path_blocked"]["params"]["lookahead_points"],
+            path_radius=config.OBSERVATIONS["actor"]["path_blocked"]["params"]["path_radius"],
+        )
 
 
 def draw_nav2_map_path_scan_debug(

@@ -117,14 +117,14 @@ def final_goal_reward(env, asset_cfg: SceneEntityCfg, threshold: float = 0.30,) 
         return torch.zeros(env.num_envs, device=env.device)
 
     dist = torch.norm(env.navrl_final_goal_xy - robot_xy, dim=-1)
-    return (dist < threshold).float()
+    return (dist < threshold).float() * _event_scale(env)
 
 def map_collision_penalty(env, asset_cfg: SceneEntityCfg, radius: float = 0.22, ) -> torch.Tensor:
-    return map_collision_flag(env, radius=radius, num_points=16,).float()
+    return map_collision_flag(env, radius=radius, num_points=16,).float() * _event_scale(env)
 
 
 def dynamic_obstacle_collision_penalty(env, asset_cfg: SceneEntityCfg, robot_radius: float = 0.22) -> torch.Tensor:
-    return dynamic_obstacle_collision_flag(env, robot_radius=robot_radius).float()
+    return dynamic_obstacle_collision_flag(env, robot_radius=robot_radius).float() * _event_scale(env)
 
 
 def dynamic_obstacle_clearance_penalty(
@@ -394,3 +394,6 @@ def mppi_teacher_imitation_reward(env) -> torch.Tensor:
     err2 = torch.sum(err * err, dim=-1)
 
     return -torch.clamp(err2, 0.0, 4.0)
+
+def _event_scale(env) -> float:
+    return 1.0 / max(float(getattr(env, "step_dt", 1.0 / 30.0)), 1.0e-6)

@@ -134,11 +134,14 @@ class ObservationsCfg:
         nav2_cross_track_error = ObsTerm(
             func=custom_observations.nav2_cross_track_error,
         )
-        combined_scan = ObsTerm(
-            func=custom_observations.combined_static_dynamic_scan,
-            params=config.OBSERVATIONS['actor']['combined_scan']['params'],
+        # combined_scan = ObsTerm(
+        #     func=custom_observations.combined_static_dynamic_scan,
+        #     params=config.OBSERVATIONS['actor']['combined_scan']['params'],
+        # )
+        scan_history = ObsTerm(
+            func=custom_observations.scan_history,
+            params=config.OBSERVATIONS['actor']['scan_history']['params'],
         )
-
         # dynamic_obstacles = ObsTerm(
         #     func=custom_observations.dynamic_obstacle_states,
         #     params=config.OBSERVATIONS['actor']['dynamic_obstacles']['params'],
@@ -178,10 +181,16 @@ class ObservationsCfg:
             func=custom_observations.nav2_cross_track_error,
         )
 
-        combined_scan = ObsTerm(
-            func=custom_observations.combined_static_dynamic_scan,
-            params=config.OBSERVATIONS['critic']['combined_scan']['params'],
+        # combined_scan = ObsTerm(
+        #     func=custom_observations.combined_static_dynamic_scan,
+        #     params=config.OBSERVATIONS['critic']['combined_scan']['params'],
+        # )
+
+        scan_history = ObsTerm(
+            func=custom_observations.scan_history,
+            params=config.OBSERVATIONS['critic']['scan_history']['params'],
         )
+
         dynamic_obstacles = ObsTerm(
             func=custom_observations.dynamic_obstacle_states,
             params=config.OBSERVATIONS['critic']['dynamic_obstacles']['params'],
@@ -244,20 +253,20 @@ class EventCfg:
         interval_range_s=config.EVENTS['update_dynamic_obstacles']['interval_range_s'],
     )
 
-    draw_nav2_debug = EventTerm(
-        func=custom_events.draw_nav2_map_path_scan_debug,
-        mode="interval",
-        interval_range_s=(0.03, 0.030),
-        params={
-            "asset_cfg": SceneEntityCfg("robot"), 
-            'map_stride': config.EVENTS['draw_nav2_debug']['params']['map_stride'],
-            "max_map_points": config.EVENTS['draw_nav2_debug']['params']['max_map_points'],
-            "path_stride": config.EVENTS['draw_nav2_debug']['params']['path_stride'],
-            "num_rays": config.EVENTS['draw_nav2_debug']['params']['num_rays'],
-            "max_range": config.EVENTS['draw_nav2_debug']['params']['max_range'],
-            "step_size": config.EVENTS['draw_nav2_debug']['params']['step_size'],
-        }
-    )
+    # draw_nav2_debug = EventTerm(
+    #     func=custom_events.draw_nav2_map_path_scan_debug,
+    #     mode="interval",
+    #     interval_range_s=(0.03, 0.030),
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"), 
+    #         'map_stride': config.EVENTS['draw_nav2_debug']['params']['map_stride'],
+    #         "max_map_points": config.EVENTS['draw_nav2_debug']['params']['max_map_points'],
+    #         "path_stride": config.EVENTS['draw_nav2_debug']['params']['path_stride'],
+    #         "num_rays": config.EVENTS['draw_nav2_debug']['params']['num_rays'],
+    #         "max_range": config.EVENTS['draw_nav2_debug']['params']['max_range'],
+    #         "step_size": config.EVENTS['draw_nav2_debug']['params']['step_size'],
+    #     }
+    # )
 
     reset_stuck_buffers = EventTerm(
         func=custom_terminations.reset_stuck_buffers,

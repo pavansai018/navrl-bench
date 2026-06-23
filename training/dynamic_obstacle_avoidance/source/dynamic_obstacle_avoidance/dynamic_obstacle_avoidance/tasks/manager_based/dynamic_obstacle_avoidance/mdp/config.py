@@ -52,13 +52,14 @@ OBSERVATIONS: dict = {
         'local_path_window': {'params': {'num_points': 8, 'step': 8,},},
         'nav2_heading_error': {},
         'nav2_cross_track_error': {},
-        'combined_scan': {'params': {'num_rays': 144, 'max_range': 4.0, 'step_size': 0.10,},},
-        'dynamic_obstacles': {'params': {"num_obstacles": 4, "max_range": 4.0},},
+        'combined_scan': {'params': {'num_rays': 144, 'max_range': 10.0, 'step_size': 0.10,},},
+        'dynamic_obstacles': {'params': {"num_obstacles": 4, "max_range": 10.0},},
         'path_blocked': {'params': {"lookahead_points": 32, "path_radius": 0.35},},
-        'time_to_closest_approach': {'params': {"num_obstacles": 2, "max_range": 4.0, "horizon_s": 3.0},},
+        'time_to_closest_approach': {'params': {"num_obstacles": 2, "max_range": 10.0, "horizon_s": 3.0},},
         'base_lin_vel': {},
         'base_angle_vel': {},
         'previous_action': {},
+        'scan_history': {'params': {'history_len': 8, 'num_rays': 144, 'max_range': 10.0, 'step_size': 0.10,}},
 
     },
 
@@ -66,10 +67,10 @@ OBSERVATIONS: dict = {
         'local_path_window': {'params': {'num_points': 8, 'step': 8,},},
         'nav2_heading_error': {},
         'nav2_cross_track_error': {},
-        'combined_scan': {'params': {'num_rays': 144, 'max_range': 4.0, 'step_size': 0.10,},},
-        'dynamic_obstacles': {'params': {"num_obstacles": 4, "max_range": 4.0},},
+        'combined_scan': {'params': {'num_rays': 144, 'max_range': 10.0, 'step_size': 0.10,},},
+        'dynamic_obstacles': {'params': {"num_obstacles": 4, "max_range": 10.0},},
         'path_blocked': {'params': {"lookahead_points": 32, "path_radius": 0.35},},
-        'time_to_closest_approach': {'params': {"num_obstacles": 2, "max_range": 4.0, "horizon_s": 3.0},},
+        'time_to_closest_approach': {'params': {"num_obstacles": 2, "max_range": 10.0, "horizon_s": 3.0},},
         'base_lin_vel': {},
         'base_angle_vel': {},
         'previous_action': {},
@@ -77,6 +78,7 @@ OBSERVATIONS: dict = {
         'progress_fraction': {},
         'map_collision': {},
         'dynamic_collision': {},
+        'scan_history': {'params': {'history_len': 8, 'num_rays': 144, 'max_range': 10.0, 'step_size': 0.10,}},
 
     },
 }
@@ -85,7 +87,7 @@ EVENTS: dict = {
     'reset_nav2_path': {'max_path_points': 600,},
     'reset_dynamic_obstacles': {'max_path_points': 600,},
     'update_dynamic_obstacles': {'interval_range_s': (0.03, 0.03),},
-    'draw_nav2_debug': {'interval_range_s': (0.03, 0.03,), 'params': {"map_stride": 2,"max_map_points": 6000, "path_stride": 4, "num_rays": 72, "max_range": 4.0, "step_size": 0.05,},},
+    'draw_nav2_debug': {'interval_range_s': (0.03, 0.03,), 'params': {"map_stride": 2,"max_map_points": 6000, "path_stride": 4, "num_rays": 72, "max_range": 10.0, "step_size": 0.05,},},
     'log_curriculum_progress': {'interval_range_s': (1.0, 1.0), },
     'log_map_collision_directions': {'interval_range_s': (1.0, 1.0), },
 }

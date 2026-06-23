@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import math
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
@@ -106,52 +106,67 @@ def infer_num_actions(num_actions, fallback=None) -> int:
 
 
 class ScanHistoryTransformerActor(nn.Module):
-    """Transformer actor for policy obs layout:
+    """
+    Scan-only dynamic-obstacle actor.
 
-    local_path_window:      16
-    nav2_heading_error:      1
-    nav2_cross_track_error:  1
-    scan_history:        1152
-    base_lin_vel:           2
-    base_angle_vel:         1
-    previous_action:        3
+    Observation layout:
+      local_path_window      16
+      heading_error           1
+      cross_track_error       1
+      scan_history       8 * 144 = 1152
+      base_lin_vel            2
+      base_ang_vel            1
+      previous_action         3
 
-    Total: 1176
+    Total = 1176
+
+    Main change from previous version:
+      Previous: 8 temporal tokens, each token = full 144-ray scan.
+      New: 144 ray tokens, each token = 8-frame temporal history of one ray.
+
+    This lets the actor learn ray-wise closing motion from scan history without
+    explicit obstacle states.
     """
 
     def __init__(
         self,
         num_actions: int,
-        history_len: int = 8,
+        scan_history_len: int = 8,
         num_rays: int = 144,
-        path_dim: int = 18,
-        motion_dim: int = 6,
         d_model: int = 128,
         nhead: int = 4,
-        num_layers: int = 2,
+        num_layers: int = 3,
         ff_dim: int = 256,
-        activation: str = "elu",
-        actor_hidden_dims: list[int] | None = None,
     ):
         super().__init__()
 
-        self.history_len = int(history_len)
-        self.num_rays = int(num_rays)
-        self.path_dim = int(path_dim)
-        self.motion_dim = int(motion_dim)
-        self.scan_dim = self.history_len * self.num_rays
+        self.path_dim = 18
+        self.scan_history_len = scan_history_len
+        self.num_rays = num_rays
+        self.scan_dim = scan_history_len * num_rays
+        self.motion_dim = 6
+
         self.expected_actor_obs_dim = self.path_dim + self.scan_dim + self.motion_dim
 
-        if actor_hidden_dims is None:
-            actor_hidden_dims = [256, 128]
+        # Per-ray input:
+        # 8 history values
+        # 7 temporal deltas
+        # current range
+        # min range over history
+        # closing rate over full history
+        # sin(theta), cos(theta)
+        ray_feature_dim = scan_history_len + (scan_history_len - 1) + 1 + 1 + 1 + 2
 
-        self.scan_proj = nn.Linear(self.num_rays, d_model)
-        self.path_proj = nn.Linear(self.path_dim, d_model)
-        self.motion_proj = nn.Linear(self.motion_dim, d_model)
-
-        self.pos_embed = nn.Parameter(
-            torch.zeros(1, self.history_len + 2, d_model)
+        self.ray_proj = nn.Sequential(
+            nn.Linear(ray_feature_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
         )
+
+        # Learned ray positional embedding: ray index / bearing information.
+        self.ray_pos_embed = nn.Parameter(torch.zeros(1, num_rays, d_model))
+        nn.init.trunc_normal_(self.ray_pos_embed, std=0.02)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -162,60 +177,143 @@ class ScanHistoryTransformerActor(nn.Module):
             batch_first=True,
             norm_first=True,
         )
-
-        self.encoder = nn.TransformerEncoder(
-            encoder_layer=encoder_layer,
+        self.ray_transformer = nn.TransformerEncoder(
+            encoder_layer,
             num_layers=num_layers,
         )
 
-        self.actor_head = build_mlp(
-            input_dim=d_model,
-            hidden_dims=actor_hidden_dims,
-            output_dim=num_actions,
-            activation=activation,
+        # Path and robot-motion encoders.
+        self.path_encoder = nn.Sequential(
+            nn.Linear(self.path_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        self.motion_encoder = nn.Sequential(
+            nn.Linear(self.motion_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        # Attention pooling over ray tokens.
+        self.ray_score = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, 1),
+        )
+
+        # Final actor head.
+        # ray_attn_pool + ray_min_pool + ray_mean_pool + path + motion
+        fused_dim = d_model * 5
+
+        self.actor_head = nn.Sequential(
+            nn.Linear(fused_dim, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, 128),
+            nn.LayerNorm(128),
+            nn.GELU(),
+            nn.Linear(128, num_actions),
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        if obs.shape[-1] != self.expected_actor_obs_dim:
+        if obs.dim() != 2:
+            obs = obs.view(obs.shape[0], -1)
+
+        if obs.shape[1] != self.expected_actor_obs_dim:
             raise RuntimeError(
-                f"Actor obs dim mismatch. Expected {self.expected_actor_obs_dim}, "
-                f"got {obs.shape[-1]}. Expected layout: "
-                f"18 path + {self.scan_dim} scan_history + 6 motion."
+                f"Actor expected obs dim {self.expected_actor_obs_dim}, got {obs.shape[1]}"
             )
 
-        path = obs[:, 0:self.path_dim]
+        path = obs[:, :18]
+        scan_flat = obs[:, 18 : 18 + self.scan_dim]
+        motion = obs[:, 18 + self.scan_dim : 18 + self.scan_dim + self.motion_dim]
 
-        scan_start = self.path_dim
-        scan_end = scan_start + self.scan_dim
+        batch_size = obs.shape[0]
 
-        scan_hist = obs[:, scan_start:scan_end].reshape(
-            obs.shape[0],
-            self.history_len,
+        # scan_hist: [B, T, R]
+        scan_hist = scan_flat.view(batch_size, self.scan_history_len, self.num_rays)
+
+        # Clamp to stable range. Your scan max is usually 4.0.
+        scan_hist = torch.clamp(scan_hist, 0.0, 4.0)
+
+        # Normalize range to roughly [0, 1].
+        scan_norm = scan_hist / 4.0
+
+        # Temporal deltas per ray.
+        # Positive closing means obstacle/range is getting closer.
+        # If old range=3.0 and new range=2.0, old-new=+1.0.
+        scan_delta = scan_norm[:, :-1, :] - scan_norm[:, 1:, :]  # [B, 7, R]
+
+        current_scan = scan_norm[:, -1:, :]                      # [B, 1, R]
+        min_scan = torch.min(scan_norm, dim=1, keepdim=True).values  # [B, 1, R]
+
+        closing_full = scan_norm[:, 0:1, :] - scan_norm[:, -1:, :]   # [B, 1, R]
+        closing_full = torch.clamp(closing_full, -1.0, 1.0)
+
+        # Ray bearing encoding. Assumes 360-degree scan from -pi to pi.
+        # Shape: [1, 2, R], then expanded by batch.
+        ray_angles = torch.linspace(
+            -math.pi,
+            math.pi,
             self.num_rays,
+            device=obs.device,
+            dtype=obs.dtype,
         )
+        angle_feat = torch.stack(
+            [torch.sin(ray_angles), torch.cos(ray_angles)],
+            dim=0,
+        ).view(1, 2, self.num_rays)
+        angle_feat = angle_feat.expand(batch_size, -1, -1)
 
-        motion = obs[:, scan_end:scan_end + self.motion_dim]
-
-        path_token = self.path_proj(path).unsqueeze(1)
-        motion_token = self.motion_proj(motion).unsqueeze(1)
-        scan_tokens = self.scan_proj(scan_hist)
-
-        tokens = torch.cat(
+        # Build per-ray features: [B, F, R]
+        ray_features = torch.cat(
             [
-                path_token,
-                motion_token,
-                scan_tokens,
+                scan_norm,       # [B, 8, R]
+                scan_delta,      # [B, 7, R]
+                current_scan,    # [B, 1, R]
+                min_scan,        # [B, 1, R]
+                closing_full,    # [B, 1, R]
+                angle_feat,      # [B, 2, R]
             ],
             dim=1,
         )
 
-        tokens = tokens + self.pos_embed
+        # [B, F, R] -> [B, R, F]
+        ray_features = ray_features.transpose(1, 2).contiguous()
 
-        encoded = self.encoder(tokens)
+        # [B, R, D]
+        ray_tokens = self.ray_proj(ray_features)
+        ray_tokens = ray_tokens + self.ray_pos_embed
 
-        feature = encoded[:, 0, :]
+        ray_tokens = self.ray_transformer(ray_tokens)
 
-        return self.actor_head(feature)
+        # Attention pooling: focus on important obstacle/free-space sectors.
+        scores = self.ray_score(ray_tokens)              # [B, R, 1]
+        weights = torch.softmax(scores, dim=1)
+        ray_attn_pool = torch.sum(weights * ray_tokens, dim=1)
+
+        # Global scan summaries.
+        ray_mean_pool = torch.mean(ray_tokens, dim=1)
+        ray_min_pool = torch.min(ray_tokens, dim=1).values
+
+        path_feat = self.path_encoder(path)
+        motion_feat = self.motion_encoder(motion)
+
+        fused = torch.cat(
+            [
+                ray_attn_pool,
+                ray_min_pool,
+                ray_mean_pool,
+                path_feat,
+                motion_feat,
+            ],
+            dim=-1,
+        )
+
+        return self.actor_head(fused)
 
 
 class ActorCriticScanTransformer(nn.Module):

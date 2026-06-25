@@ -11,7 +11,22 @@ try:
 except ModuleNotFoundError:
     RandomNetworkDistillation = None
 from rsl_rl.storage import RolloutStorage
-from rsl_rl.utils import string_to_callable
+try:
+    from rsl_rl.utils import string_to_callable
+except ImportError:
+    import importlib
+
+    def string_to_callable(name):
+        if not isinstance(name, str):
+            return name
+
+        if ":" in name:
+            module_name, attr_name = name.split(":", 1)
+        else:
+            module_name, attr_name = name.rsplit(".", 1)
+
+        module = importlib.import_module(module_name)
+        return getattr(module, attr_name)
 
 
 class ActorCriticRecurrent(nn.Module):

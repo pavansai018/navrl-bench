@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Normal
 
 
@@ -11,7 +13,6 @@ CRITIC_OBS_DIM = 1209
 
 def get_activation(name: str) -> nn.Module:
     name = str(name).lower()
-
     if name == "elu":
         return nn.ELU()
     if name == "relu":
@@ -20,7 +21,6 @@ def get_activation(name: str) -> nn.Module:
         return nn.Tanh()
     if name == "gelu":
         return nn.GELU()
-
     raise ValueError(f"Unsupported activation: {name}")
 
 
@@ -30,41 +30,29 @@ def build_mlp(
     output_dim: int,
     activation: str,
 ) -> nn.Sequential:
-    input_dim = int(input_dim)
-    output_dim = int(output_dim)
-    hidden_dims = [int(v) for v in hidden_dims]
-
     layers: list[nn.Module] = []
-    last_dim = input_dim
+    last_dim = int(input_dim)
 
     for hidden_dim in hidden_dims:
-        layers.append(nn.Linear(last_dim, hidden_dim))
+        layers.append(nn.Linear(last_dim, int(hidden_dim)))
         layers.append(get_activation(activation))
-        last_dim = hidden_dim
+        last_dim = int(hidden_dim)
 
-    layers.append(nn.Linear(last_dim, output_dim))
+    layers.append(nn.Linear(last_dim, int(output_dim)))
     return nn.Sequential(*layers)
 
 
 def to_int_list(x, default: list[int]) -> list[int]:
     if x is None:
         return list(default)
-
     if isinstance(x, list):
         return [int(v) for v in x]
-
     if isinstance(x, tuple):
         return [int(v) for v in x]
-
-    try:
-        return [int(v) for v in list(x)]
-    except Exception as exc:
-        raise TypeError(f"Cannot convert hidden dims to int list: {x}") from exc
+    return [int(v) for v in list(x)]
 
 
 def select_obs(observations, group_name: str) -> torch.Tensor:
-    """Select policy/critic tensor from TensorDict, dict, or already-flat tensor."""
-
     if isinstance(observations, torch.Tensor):
         return observations
 
@@ -84,7 +72,7 @@ def select_obs(observations, group_name: str) -> torch.Tensor:
             return select_obs(observations["observations"], group_name)
 
     raise TypeError(
-        f"Cannot select {group_name} observations from type {type(observations)}: {observations}"
+        f"Cannot select {group_name} observations from type {type(observations)}"
     )
 
 
@@ -107,25 +95,20 @@ def infer_num_actions(num_actions, fallback=None) -> int:
 
 class ScanHistoryTransformerActor(nn.Module):
     """
-    Scan-only dynamic-obstacle actor.
+    Actor observation layout:
 
-    Observation layout:
-      local_path_window      16
-      heading_error           1
-      cross_track_error       1
-      scan_history       8 * 144 = 1152
-      base_lin_vel            2
-      base_ang_vel            1
-      previous_action         3
+    local_path_window       16
+    heading_error            1
+    cross_track_error        1
+    scan_history       8 * 144 = 1152
+    base_lin_vel             2
+    base_ang_vel             1
+    previous_action          3
 
     Total = 1176
 
-    Main change from previous version:
-      Previous: 8 temporal tokens, each token = full 144-ray scan.
-      New: 144 ray tokens, each token = 8-frame temporal history of one ray.
-
-    This lets the actor learn ray-wise closing motion from scan history without
-    explicit obstacle states.
+    Actor input remains scan/path/velocity/previous-action only.
+    Auxiliary heads are training-only.
     """
 
     def __init__(
@@ -135,27 +118,27 @@ class ScanHistoryTransformerActor(nn.Module):
         num_rays: int = 144,
         d_model: int = 128,
         nhead: int = 4,
-        num_layers: int = 3,
+        num_layers: int = 2,
         ff_dim: int = 256,
     ):
         super().__init__()
 
         self.path_dim = 18
-        self.scan_history_len = scan_history_len
-        self.num_rays = num_rays
-        self.scan_dim = scan_history_len * num_rays
+        self.scan_history_len = int(scan_history_len)
+        self.num_rays = int(num_rays)
+        self.scan_dim = self.scan_history_len * self.num_rays
         self.motion_dim = 6
 
         self.expected_actor_obs_dim = self.path_dim + self.scan_dim + self.motion_dim
 
-        # Per-ray input:
-        # 8 history values
-        # 7 temporal deltas
-        # current range
-        # min range over history
-        # closing rate over full history
-        # sin(theta), cos(theta)
-        ray_feature_dim = scan_history_len + (scan_history_len - 1) + 1 + 1 + 1 + 2
+        ray_feature_dim = (
+            self.scan_history_len
+            + (self.scan_history_len - 1)
+            + 1
+            + 1
+            + 1
+            + 2
+        )
 
         self.ray_proj = nn.Sequential(
             nn.Linear(ray_feature_dim, d_model),
@@ -164,8 +147,7 @@ class ScanHistoryTransformerActor(nn.Module):
             nn.Linear(d_model, d_model),
         )
 
-        # Learned ray positional embedding: ray index / bearing information.
-        self.ray_pos_embed = nn.Parameter(torch.zeros(1, num_rays, d_model))
+        self.ray_pos_embed = nn.Parameter(torch.zeros(1, self.num_rays, d_model))
         nn.init.trunc_normal_(self.ray_pos_embed, std=0.02)
 
         encoder_layer = nn.TransformerEncoderLayer(
@@ -177,12 +159,12 @@ class ScanHistoryTransformerActor(nn.Module):
             batch_first=True,
             norm_first=True,
         )
+
         self.ray_transformer = nn.TransformerEncoder(
             encoder_layer,
             num_layers=num_layers,
         )
 
-        # Path and robot-motion encoders.
         self.path_encoder = nn.Sequential(
             nn.Linear(self.path_dim, d_model),
             nn.LayerNorm(d_model),
@@ -197,16 +179,14 @@ class ScanHistoryTransformerActor(nn.Module):
             nn.Linear(d_model, d_model),
         )
 
-        # Attention pooling over ray tokens.
         self.ray_score = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.GELU(),
             nn.Linear(d_model, 1),
         )
 
-        # Final actor head.
-        # ray_attn_pool + ray_min_pool + ray_mean_pool + path + motion
         fused_dim = d_model * 5
+        self.feature_dim = fused_dim
 
         self.actor_head = nn.Sequential(
             nn.Linear(fused_dim, 256),
@@ -218,9 +198,21 @@ class ScanHistoryTransformerActor(nn.Module):
             nn.Linear(128, num_actions),
         )
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        self.aux_path_blocked_head = nn.Sequential(
+            nn.Linear(fused_dim, 128),
+            nn.GELU(),
+            nn.Linear(128, 1),
+        )
+
+        self.aux_dynamic_risk_head = nn.Sequential(
+            nn.Linear(fused_dim, 128),
+            nn.GELU(),
+            nn.Linear(128, 1),
+        )
+
+    def encode(self, obs: torch.Tensor) -> torch.Tensor:
         if obs.dim() != 2:
-            obs = obs.view(obs.shape[0], -1)
+            obs = obs.reshape(obs.shape[0], -1)
 
         if obs.shape[1] != self.expected_actor_obs_dim:
             raise RuntimeError(
@@ -233,28 +225,20 @@ class ScanHistoryTransformerActor(nn.Module):
 
         batch_size = obs.shape[0]
 
-        # scan_hist: [B, T, R]
-        scan_hist = scan_flat.view(batch_size, self.scan_history_len, self.num_rays)
+        scan_hist = scan_flat.reshape(
+            batch_size,
+            self.scan_history_len,
+            self.num_rays,
+        )
 
-        # Clamp to stable range. Your scan max is usually 4.0.
         scan_hist = torch.clamp(scan_hist, 0.0, 4.0)
-
-        # Normalize range to roughly [0, 1].
         scan_norm = scan_hist / 4.0
 
-        # Temporal deltas per ray.
-        # Positive closing means obstacle/range is getting closer.
-        # If old range=3.0 and new range=2.0, old-new=+1.0.
-        scan_delta = scan_norm[:, :-1, :] - scan_norm[:, 1:, :]  # [B, 7, R]
+        scan_delta = scan_norm[:, :-1, :] - scan_norm[:, 1:, :]
+        current_scan = scan_norm[:, -1:, :]
+        min_scan = torch.min(scan_norm, dim=1, keepdim=True).values
+        closing_full = torch.clamp(scan_norm[:, 0:1, :] - scan_norm[:, -1:, :], -1.0, 1.0)
 
-        current_scan = scan_norm[:, -1:, :]                      # [B, 1, R]
-        min_scan = torch.min(scan_norm, dim=1, keepdim=True).values  # [B, 1, R]
-
-        closing_full = scan_norm[:, 0:1, :] - scan_norm[:, -1:, :]   # [B, 1, R]
-        closing_full = torch.clamp(closing_full, -1.0, 1.0)
-
-        # Ray bearing encoding. Assumes 360-degree scan from -pi to pi.
-        # Shape: [1, 2, R], then expanded by batch.
         ray_angles = torch.linspace(
             -math.pi,
             math.pi,
@@ -262,40 +246,36 @@ class ScanHistoryTransformerActor(nn.Module):
             device=obs.device,
             dtype=obs.dtype,
         )
+
         angle_feat = torch.stack(
             [torch.sin(ray_angles), torch.cos(ray_angles)],
             dim=0,
-        ).view(1, 2, self.num_rays)
+        ).reshape(1, 2, self.num_rays)
+
         angle_feat = angle_feat.expand(batch_size, -1, -1)
 
-        # Build per-ray features: [B, F, R]
         ray_features = torch.cat(
             [
-                scan_norm,       # [B, 8, R]
-                scan_delta,      # [B, 7, R]
-                current_scan,    # [B, 1, R]
-                min_scan,        # [B, 1, R]
-                closing_full,    # [B, 1, R]
-                angle_feat,      # [B, 2, R]
+                scan_norm,
+                scan_delta,
+                current_scan,
+                min_scan,
+                closing_full,
+                angle_feat,
             ],
             dim=1,
         )
 
-        # [B, F, R] -> [B, R, F]
         ray_features = ray_features.transpose(1, 2).contiguous()
 
-        # [B, R, D]
         ray_tokens = self.ray_proj(ray_features)
         ray_tokens = ray_tokens + self.ray_pos_embed
-
         ray_tokens = self.ray_transformer(ray_tokens)
 
-        # Attention pooling: focus on important obstacle/free-space sectors.
-        scores = self.ray_score(ray_tokens)              # [B, R, 1]
+        scores = self.ray_score(ray_tokens)
         weights = torch.softmax(scores, dim=1)
-        ray_attn_pool = torch.sum(weights * ray_tokens, dim=1)
 
-        # Global scan summaries.
+        ray_attn_pool = torch.sum(weights * ray_tokens, dim=1)
         ray_mean_pool = torch.mean(ray_tokens, dim=1)
         ray_min_pool = torch.min(ray_tokens, dim=1).values
 
@@ -313,7 +293,17 @@ class ScanHistoryTransformerActor(nn.Module):
             dim=-1,
         )
 
-        return self.actor_head(fused)
+        return fused
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        feature = self.encode(obs)
+        return self.actor_head(feature)
+
+    def auxiliary_logits(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        feature = self.encode(obs)
+        path_blocked_logits = self.aux_path_blocked_head(feature)
+        dynamic_risk_logits = self.aux_dynamic_risk_head(feature)
+        return path_blocked_logits, dynamic_risk_logits
 
 
 class ActorCriticScanTransformer(nn.Module):
@@ -347,7 +337,7 @@ class ActorCriticScanTransformer(nn.Module):
             except Exception:
                 critic_obs_dim = CRITIC_OBS_DIM
 
-        num_actions = infer_num_actions(num_actions, fallback=num_critic_obs)
+        num_actions = infer_num_actions(num_actions, fallback=None)
 
         actor_hidden_dims = to_int_list(actor_hidden_dims, [256, 128])
         critic_hidden_dims = to_int_list(critic_hidden_dims, [256, 256, 128])
@@ -359,16 +349,12 @@ class ActorCriticScanTransformer(nn.Module):
 
         self.actor = ScanHistoryTransformerActor(
             num_actions=num_actions,
-            history_len=8,
+            scan_history_len=8,
             num_rays=144,
-            path_dim=18,
-            motion_dim=6,
             d_model=128,
             nhead=4,
             num_layers=2,
             ff_dim=256,
-            activation=activation,
-            actor_hidden_dims=actor_hidden_dims,
         )
 
         self.critic = build_mlp(
@@ -390,21 +376,18 @@ class ActorCriticScanTransformer(nn.Module):
             self.log_std = None
 
         self.distribution: Normal | None = None
+        self.aux_call_count = 0
 
     def reset(self, dones=None):
         pass
 
     def update_normalization(self, observations):
-        # Required by this RSL-RL version.
-        # This custom actor-critic is not using internal observation normalizers.
         return
 
     def get_normalization_state(self):
-        # Required for checkpoint compatibility in some RSL-RL versions.
         return {}
 
     def load_normalization_state(self, state):
-        # Required for checkpoint compatibility in some RSL-RL versions.
         return
 
     @property
@@ -426,6 +409,113 @@ class ActorCriticScanTransformer(nn.Module):
             std = torch.clamp(self.std, min=1.0e-6)
 
         return std.expand_as(mean)
+
+    @staticmethod
+    def _balanced_bce_with_logits(
+        logits: torch.Tensor,
+        target: torch.Tensor,
+    ) -> torch.Tensor:
+        target = target.float().clamp(0.0, 1.0)
+
+        with torch.no_grad():
+            positive_rate = target.mean().clamp(0.02, 0.98)
+            pos_weight = ((1.0 - positive_rate) / positive_rate).reshape(1)
+
+        return F.binary_cross_entropy_with_logits(
+            logits,
+            target,
+            pos_weight=pos_weight.to(device=logits.device, dtype=logits.dtype),
+        )
+
+    def _aux_targets_from_critic_obs(
+        self,
+        critic_obs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Critic layout:
+
+        0:1176      policy obs
+        1176:1200   dynamic_obstacles, 24
+        1200:1201   path_blocked
+        1201:1205   time_to_closest_approach: [tca0, dca0, tca1, dca1]
+        1205:1206   distance_to_goal
+        1206:1207   progress_fraction
+        1207:1208   map_collision
+        1208:1209   dynamic_collision
+        """
+        critic_obs = critic_obs.detach()
+
+        path_blocked = critic_obs[:, 1200:1201].float().clamp(0.0, 1.0)
+
+        ttc_dca = critic_obs[:, 1201:1205].float()
+        ttc_dca = torch.nan_to_num(ttc_dca, nan=1.0, posinf=1.0, neginf=0.0)
+
+        tca_norm = ttc_dca[:, 0::2].clamp(0.0, 1.0)
+        dca_norm = ttc_dca[:, 1::2].clamp(0.0, 1.0)
+
+        # TCA is normalized by horizon_s.
+        # DCA is normalized by max_range.
+        # Risk target: obstacle soon + predicted closest distance small.
+        soon_risk = torch.clamp((0.45 - tca_norm) / 0.45, 0.0, 1.0)
+        close_risk = torch.clamp((0.14 - dca_norm) / 0.14, 0.0, 1.0)
+
+        dynamic_risk = soon_risk * close_risk
+        dynamic_risk = torch.max(dynamic_risk, dim=-1, keepdim=True).values
+
+        dynamic_collision = critic_obs[:, 1208:1209].float().clamp(0.0, 1.0)
+        dynamic_risk = torch.maximum(dynamic_risk, dynamic_collision)
+
+        return path_blocked, dynamic_risk
+
+    def auxiliary_loss(
+        self,
+        actor_observations,
+        critic_observations,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        policy_obs = select_obs(actor_observations, "policy")
+        critic_obs = select_obs(critic_observations, "critic")
+
+        path_blocked_target, dynamic_risk_target = self._aux_targets_from_critic_obs(
+            critic_obs
+        )
+
+        path_blocked_logits, dynamic_risk_logits = self.actor.auxiliary_logits(policy_obs)
+
+        blocked_loss = self._balanced_bce_with_logits(
+            path_blocked_logits,
+            path_blocked_target,
+        )
+
+        risk_loss = self._balanced_bce_with_logits(
+            dynamic_risk_logits,
+            dynamic_risk_target,
+        )
+
+        aux_loss = blocked_loss + 0.5 * risk_loss
+
+        self.aux_call_count += 1
+        if self.aux_call_count % 500 == 0:
+            with torch.no_grad():
+                print(
+                    "[AUX]",
+                    "calls=", self.aux_call_count,
+                    "loss=", float(aux_loss.detach().cpu()),
+                    "blocked_pred=", float(torch.sigmoid(path_blocked_logits).mean().detach().cpu()),
+                    "blocked_target=", float(path_blocked_target.mean().detach().cpu()),
+                    "risk_pred=", float(torch.sigmoid(dynamic_risk_logits).mean().detach().cpu()),
+                    "risk_target=", float(dynamic_risk_target.mean().detach().cpu()),
+                    flush=True,
+                )
+
+        info = {
+            "aux_loss": float(aux_loss.detach().cpu()),
+            "aux_blocked_loss": float(blocked_loss.detach().cpu()),
+            "aux_risk_loss": float(risk_loss.detach().cpu()),
+            "aux_blocked_target": float(path_blocked_target.mean().detach().cpu()),
+            "aux_risk_target": float(dynamic_risk_target.mean().detach().cpu()),
+        }
+
+        return aux_loss, info
 
     def update_distribution(self, observations):
         policy_obs = select_obs(observations, "policy")

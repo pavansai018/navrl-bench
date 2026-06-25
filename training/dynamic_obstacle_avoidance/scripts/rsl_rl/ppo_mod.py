@@ -11,7 +11,19 @@ import torch.optim as optim
 from itertools import chain
 from tensordict import TensorDict
 
-from rsl_rl.modules import ActorCritic, ActorCriticRecurrent
+try:
+    from rsl_rl.modules import ActorCritic, ActorCriticRecurrent
+except ImportError:
+    # In some RSL-RL / IsaacLab versions these classes are not exported from
+    # rsl_rl.modules.__init__.py. For this PPO file they are only needed for
+    # typing and one recurrent-policy check. Your policy is non-recurrent.
+    ActorCritic = nn.Module
+
+    try:
+        from rsl_rl.modules.actor_critic_recurrent import ActorCriticRecurrent
+    except Exception:
+        class ActorCriticRecurrent(nn.Module):
+            pass
 from rsl_rl.modules.rnd import RandomNetworkDistillation
 from rsl_rl.storage import RolloutStorage
 from rsl_rl.utils import string_to_callable

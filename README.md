@@ -8,9 +8,7 @@
 
 **RL-Based Dynamic Obstacle Avoidance for ROSMASTER M3 Navigation**
 
-NavRL Bench is a robotics project focused on goal-directed navigation in dynamic environments. The project trains an RL-based local controller for **ROSMASTER M3** using **IsaacLab / Isaac Sim** and benchmarks the trained policy against classical **Nav2** local controllers such as **DWB**, **MPPI**, and **Regulated Pure Pursuit**.
-
-The final goal is simple:
+NavRL Bench trains a PPO policy with a **ScanHistoryTransformerActor** from scratch in IsaacLab / Isaac Sim and benchmarks the trained policy against classical Nav2 local controllers — **DWB**, **MPPI**, and **Regulated Pure Pursuit** — on the **ROSMASTER M3** mecanum-wheel robot.
 
 > Given a goal, the robot should avoid fast-moving obstacles and reach the goal safely.
 
@@ -20,50 +18,33 @@ The final goal is simple:
 
 Classical Nav2 controllers are reliable and widely used for mobile robot navigation. However, when fast-moving obstacles repeatedly cross the robot path, they can become conservative, stop frequently, or struggle to maintain smooth progress toward the goal.
 
-NavRL Bench investigates whether a reinforcement-learning-based local controller trained from scratch can produce more adaptive dynamic-obstacle avoidance behavior while still reaching the assigned goal safely.
+ROSMASTER M3 is a mecanum-wheel platform capable of lateral (strafe) motion. Classical controllers rarely exploit lateral velocity for obstacle avoidance. An RL controller trained with a 3D velocity action space — linear x, linear y, and angular z — can learn adaptive lateral bypass maneuvers that classical baselines do not produce.
 
-The project does not assume that RL will always perform better. The goal is to measure where classical controllers perform well, where they struggle, and whether the trained RL policy provides better adaptability in fast-moving dynamic-obstacle scenarios.
+NavRL Bench investigates whether a trained scan-transformer policy can learn more adaptive dynamic-obstacle avoidance while still reaching the assigned goal safely.
 
 ---
 
 ## Core Idea
 
-The global planner remains unchanged. Only the local controller block is compared.
+The global planner remains unchanged. Only the local controller block is replaced.
 
 ```text
 Map + Goal
    ↓
 Nav2 Global Planner
    ↓
-Global Path
+Global Path → 8 lookahead waypoints extracted by RL bridge node
    ↓
 Local Controller
    ├── DWB
    ├── MPPI
    ├── Regulated Pure Pursuit
-   └── Trained RL Policy
+   └── PPO + ScanHistoryTransformerActor  ← trained by this project
    ↓
-/cmd_vel
+/cmd_vel  →  [vx, vy, wz]
    ↓
-ROSMASTER M3
+ROSMASTER M3 (mecanum wheels)
 ```
-
----
-
-## Project Objectives
-
-- Train an RL-based local navigation policy from scratch.
-- Use IsaacLab / Isaac Sim for simulation-based RL training.
-- Integrate the trained policy into a ROS2 / Nav2 local-control pipeline.
-- Benchmark the RL policy against classical Nav2 controllers.
-- Focus on fast-moving dynamic-obstacle avoidance.
-- Evaluate all controllers under controlled and repeatable test conditions.
-
----
-
-## Robot Platform
-
-The project uses **ROSMASTER M3** as the mobile robot platform for navigation, obstacle avoidance, benchmarking, and sim-to-real testing.
 
 ---
 
@@ -71,14 +52,238 @@ The project uses **ROSMASTER M3** as the mobile robot platform for navigation, o
 
 | Component | Tool / Framework |
 |---|---|
-| Robot Platform | ROSMASTER M3 |
+| Robot Platform | ROSMASTER M3 (mecanum wheels) |
 | Middleware | ROS 2 |
 | Navigation Stack | Nav2 |
 | Classical Controllers | DWB, MPPI, Regulated Pure Pursuit |
-| RL Training | IsaacLab / Isaac Sim |
-| RL Algorithm | PPO |
+| RL Training Simulator | IsaacLab / Isaac Sim |
+| RL Algorithm | PPO (RSL-RL) |
+| Policy Architecture | ScanHistoryTransformerActor (PyTorch TransformerEncoder) |
 | Simulation / Visualization | Isaac Sim, Gazebo, RViz |
-| Programming | Python |
+| Programming | Python, PyTorch |
+
+---
+
+## Policy Architecture — ScanHistoryTransformerActor
+
+Instead of processing a single lidar snapshot, the actor treats each of the **144 lidar rays as a transformer token** whose value is an **8-frame temporal history**. This lets the network learn ray-wise closing motion — detecting which angular sectors contain approaching obstacles — without ever receiving explicit obstacle positions or velocities.
+
+```text
+Policy obs (1176-dim)
+   ├── path [18]        8 Nav2 waypoints in robot frame + heading error + cross-track error
+   ├── scan_flat [1152] 8 frames × 144 rays  →  reshape [B, 8, 144]
+   └── motion [6]       vx, vy, wz + previous action
+
+Per-ray feature extraction  (20 features per ray)
+   8 normalized history values | 7 temporal deltas | current range
+   min range over history | closing rate | sin(θ), cos(θ)
+   ↓
+ray_proj: Linear(20→128) → LayerNorm → GELU → Linear(128→128)
++ learned positional embedding [1, 144, 128]
+   ↓
+TransformerEncoder  (d_model=128, nhead=4, ff_dim=256, norm_first=True)
+   ↓
+Multi-pooling
+   ├── attention pool [128]   learned importance weights over rays
+   ├── min pool      [128]   worst-case obstacle sectors
+   └── mean pool     [128]   global scene context
+
+path_encoder:   Linear(18→128) → LN → GELU → Linear → [128]
+motion_encoder: Linear(6→128)  → LN → GELU → Linear → [128]
+   ↓
+concat → [640]
+   ↓
+actor_head: Linear(640→256) → LN → GELU → Linear(256→128) → LN → GELU → Linear(128→3)
+   ↓
+Output: [vx, vy, wz]
+```
+
+The **critic** receives a privileged 1209-dim observation that includes ground-truth positions and velocities of the 4 nearest dynamic obstacles, enabling accurate value estimation during training. This information is never passed to the deployed policy.
+
+---
+
+## Observation Space
+
+### Policy Observations — 1176 dimensions
+
+| Term | Dim | Description |
+|---|---|---|
+| `local_path_window` | 16 | 8 future Nav2 waypoints in robot frame (x, y per point), normalized by 4 m |
+| `nav2_heading_error` | 1 | Angular error between robot yaw and path tangent, wrapped to [−π, π] rad |
+| `nav2_cross_track_error` | 1 | Signed lateral distance from robot to nearest path point, in metres |
+| `scan_history` | 1152 | 8-frame lidar history × 144 rays; 360° scan, 10 m range. Flattened as [T, R] |
+| `base_lin_vel` | 2 | Robot linear velocity (vx, vy) in m/s |
+| `base_ang_vel` | 1 | Robot yaw rate wz in rad/s |
+| `previous_action` | 3 | Last velocity command normalized to [−1, 1]: (vx, vy, wz) |
+| **Total** | **1176** | |
+
+### Additional Critic Observations — 33 extra dims → 1209 total
+
+| Term | Dim | Description |
+|---|---|---|
+| `dynamic_obstacles` | 24 | 4 nearest obstacles × [x, y, vx, vy, radius, active] in robot frame |
+| `path_blocked` | 1 | Binary: obstacle overlaps forward path corridor |
+| `time_to_closest_approach` | 4 | 2 obstacles × [TCA, DCA] |
+| `distance_to_goal` | 1 | Euclidean distance to final goal waypoint |
+| `progress_fraction` | 1 | Fraction of Nav2 path completed [0, 1] |
+| `map_collision` | 1 | Binary: robot footprint in static map |
+| `dynamic_collision` | 1 | Binary: robot in contact with dynamic obstacle |
+| **Total** | **1209** | |
+
+---
+
+## Action Space
+
+The policy outputs a **3D mecanum velocity command**:
+
+| Axis | Limit | Description |
+|---|---|---|
+| `vx` | ±0.5 m/s | Forward / backward |
+| `vy` | ±0.5 m/s | Lateral strafe |
+| `wz` | ±1.5 rad/s | Yaw rotation |
+
+Actions are clipped to [−1, 1] by the actor head, scaled by the limits above, then processed through a rate limiter (smooth acceleration) and a static map action shield (blocks commands that would collide with known walls).
+
+---
+
+## Reward Design
+
+The reward function has 20+ terms covering path following, obstacle avoidance, goal reaching, and behavioral shaping.
+
+### Path Following
+
+| Term | Weight | Description |
+|---|---|---|
+| `progress` | +35.0 | Arc-length progress along Nav2 path per step |
+| `goal_approach` | +5.0 | Decrease in distance to final goal per step |
+| `cross_track` | −4.0 | Lateral distance from path |
+| `path_rejoin` | +15.0 | Reward returning to path when CTE > 0.2 m |
+| `heading_alignment` | +8.0 | cos(path tangent − robot yaw), 4-step lookahead |
+| `path_velocity` | +6.0 | Velocity projected onto path tangent |
+
+### Dynamic Obstacle Avoidance
+
+| Term | Weight | Description |
+|---|---|---|
+| `dynamic_collision` | −100.0 | Direct contact — terminates episode |
+| `dynamic_clearance` | −20.0 | Within robot_radius + 0.25 m safety margin |
+| `dynamic_ttc` | −15.0 | Time-to-collision below threshold within 3 s horizon |
+| `dynamic_yield_no_side_space` | +8.0 | Reward slowing when both forward path and sides are blocked |
+| `wall_aware_dynamic_bypass` | +20.0 | Reward lateral bypass when side wall clearance exists |
+| `dynamic_forward_blocked` | −12.0 | Penalty for moving forward into blocked corridor |
+| `dynamic_bad_lateral` | −8.0 | Penalty for strafing toward a wall with insufficient clearance |
+
+### Static Map Avoidance
+
+| Term | Weight | Description |
+|---|---|---|
+| `map_collision` | −150.0 | Footprint in occupancy map — terminates episode; heaviest penalty |
+| `static_velocity_clearance` | −15.0 | Moving toward walls within 0.3 m in ±45° forward sector |
+
+### Goal Reaching
+
+| Term | Weight | Description |
+|---|---|---|
+| `final_goal` | +120.0 | Sparse bonus for reaching within 0.3 m of goal — terminates episode |
+
+### Action Regularization and Behavioral Shaping
+
+| Term | Weight | Description |
+|---|---|---|
+| `action_smoothness` | −0.06 | L2 norm of action change per step |
+| `yaw_rate` | −0.05 | Absolute yaw rate — discourages spinning |
+| `lateral_oscillation` | −0.35 | Sign flip in vy between steps — discourages side-to-side oscillation |
+| `time` | −0.06 | Per-step time penalty |
+| `no_wait` | −2.0 | Near-zero speed when path is not blocked — prevents waiting as a strategy |
+| `start_speed` | −8.0 | Slow speed during first 1.5 s of episode — prevents hesitation at start |
+
+---
+
+## Training Pipeline
+
+```text
+Import ROSMASTER M3 URDF into IsaacLab (4 mecanum wheels, 0.035 m radius)
+   ↓
+Load real Nav2 path dataset — AWS warehouse map, up to 600 points per episode
+   ↓
+Define 1176-dim policy observation / 1209-dim privileged critic observation
+   ↓
+Define 3D mecanum velocity action space
+   ↓
+Train PPO with ScanHistoryTransformerActor — parallel envs, adaptive curriculum
+   ↓
+Adaptive curriculum: obstacle difficulty first, then domain randomization
+   ↓
+Validate policy in simulation
+   ↓
+Export checkpoint → load inside Nav2 RL local controller node
+```
+
+---
+
+## Curriculum Design
+
+The curriculum follows an **obstacles_first** strategy. The policy masters obstacle avoidance before sensor noise and actuator imperfections are introduced.
+
+### Track 1 — Obstacle Difficulty
+
+| Level | Scenario |
+|---|---|
+| L0 | Open field — pure goal-reaching |
+| L1 | Tiny stationary obstacle on path (r 0.08–0.11 m) |
+| L2 | Tiny stationary obstacle, lateral offset |
+| L3 | Small stationary obstacle on path (r 0.10–0.14 m) |
+| L4 | Small stationary obstacle, lateral offset |
+| L5 | Medium stationary obstacle (r 0.14–0.18 m) |
+| L6 | Slow crossing obstacle (speed 0.04–0.10 m/s, perpendicular to path) |
+
+### Track 2 — Domain Randomization
+
+| Stage | Randomization |
+|---|---|
+| DR0 | Lidar ray count degradation |
+| DR1 | Gaussian scan noise |
+| DR2 | Random ray dropout |
+| DR3 | Action delay (1–3 step buffer) |
+| DR4 | Per-wheel motor strength scaling |
+| DR5–9 | Mass, CoM shift, wheel radius mismatch, wheel slip, combined |
+
+### Promotion / Demotion
+
+| Metric | Promote | Demote |
+|---|---|---|
+| Success Rate | > 70% | < 10% |
+| Map Collision Rate | < 20% | > 50% |
+| Dynamic Collision Rate | < 20% | > 50% |
+| Timeout Rate | < 15% | > 50% |
+
+---
+
+## PPO Configuration
+
+| Parameter | Value |
+|---|---|
+| Algorithm | PPO (RSL-RL) |
+| LR schedule | Adaptive (KL-based) |
+| Target KL | 0.01 |
+| Clip parameter ε | 0.2 |
+| Discount factor γ | 0.99 |
+| GAE λ | 0.95 |
+| Max gradient norm | 1.0 |
+| Clipped value loss | Yes |
+| Entropy coefficient | 0.00 |
+
+---
+
+## Termination Conditions
+
+| Condition | Outcome |
+|---|---|
+| Distance to goal < 0.3 m | Success |
+| Episode time limit exceeded | Failure |
+| Robot footprint in static map | Failure |
+| Contact with dynamic obstacle | Failure |
+| Speed < 0.02 m/s for > 2.0 s (not near goal) | Failure — stuck |
 
 ---
 
@@ -86,91 +291,19 @@ The project uses **ROSMASTER M3** as the mobile robot platform for navigation, o
 
 ### DWB Controller
 
-A classical Nav2 local controller based on the Dynamic Window Approach. It samples possible velocity commands and evaluates them using critic functions.
+A classical Nav2 local controller based on the Dynamic Window Approach. Samples possible velocity commands and evaluates them using configurable critic functions.
 
 ### MPPI Controller
 
-A sampling-based predictive controller that evaluates candidate trajectories and selects the best control action based on cost.
+A sampling-based predictive controller that evaluates thousands of candidate trajectories and selects the optimal control action by cost-weighted averaging.
 
 ### Regulated Pure Pursuit
 
 A path-tracking controller that follows the global path while regulating speed based on curvature and collision constraints.
 
-### Trained RL Policy
+### PPO + ScanHistoryTransformerActor
 
-A reinforcement-learning-based local controller trained from scratch in IsaacLab / Isaac Sim. The policy outputs velocity commands compatible with the ROS2 navigation pipeline.
-
----
-
-## RL Training Pipeline
-
-```text
-Create ROSMASTER M3 training environment
-   ↓
-Define observation space
-   ↓
-Define velocity action space
-   ↓
-Design reward function
-   ↓
-Train PPO policy from scratch
-   ↓
-Validate policy in simulation
-   ↓
-Export trained policy
-   ↓
-Integrate into ROS2 / Nav2 local-control pipeline
-```
-
----
-
-## Planned RL Observation Space
-
-The RL policy is expected to use local navigation information such as:
-
-- Goal direction relative to the robot
-- Goal distance
-- Robot linear velocity
-- Robot angular velocity
-- Laser scan or compact local obstacle representation
-- Previous action for smoother behavior
-- Optional local path information from Nav2
-
----
-
-## Planned RL Action Space
-
-The policy outputs velocity commands:
-
-```text
-linear velocity
-angular velocity
-```
-
-These commands are constrained by ROSMASTER M3 safety limits and converted into valid `/cmd_vel` messages.
-
----
-
-## Reward Design
-
-The reward function is designed to encourage safe and useful navigation behavior.
-
-### Positive Rewards
-
-- Progress toward the goal
-- Reaching the goal
-- Maintaining useful forward motion
-- Safe local obstacle avoidance
-
-### Penalties
-
-- Collision with obstacles
-- Getting too close to obstacles
-- Unnecessary stopping
-- Moving away from the goal
-- Jerky or unstable velocity commands
-
-The reward design will be refined through training experiments.
+A PPO policy with a transformer-based actor trained from scratch in IsaacLab. Outputs a 3D mecanum velocity command including lateral strafe, integrated into Nav2 via a custom local controller plugin node.
 
 ---
 
@@ -186,25 +319,23 @@ A moving obstacle briefly blocks the route, forcing the robot to slow down, wait
 
 ### 3. Goal Reaching with Moving Obstacles
 
-The robot must reach the assigned goal while reacting to moving obstacles along the route.
+The robot must reach the assigned goal while reacting to multiple moving obstacles along the route.
 
 ### 4. Static Obstacle Navigation
 
-A baseline scenario to verify normal local navigation behavior around fixed obstacles.
+A baseline scenario to verify normal local navigation behavior around fixed obstacles without dynamic elements.
 
 ### 5. Narrow Passage Navigation
 
-The robot navigates through a narrow passage where local control decisions are important.
+The robot navigates through a narrow passage where precise lateral positioning and local control decisions matter.
 
 ### 6. Repeated Controlled Trials
 
-Each controller is tested multiple times under the same scenario setup for fair comparison.
+Each controller is tested multiple times under the same scenario setup for statistically fair comparison.
 
 ---
 
 ## Evaluation Metrics
-
-Controller performance will be evaluated using:
 
 - Success rate
 - Time to goal
@@ -219,38 +350,22 @@ Controller performance will be evaluated using:
 
 ## Benchmark Principle
 
-The benchmark follows one main rule:
-
 > Same robot, same map, same start-goal pairs, same dynamic-obstacle setup, same robot limits.
 
-Only the local controller changes.
-
-This keeps the comparison fair between:
-
-```text
-DWB
-MPPI
-Regulated Pure Pursuit
-RL Policy
-```
+Only the local controller changes. Classical controllers use their standard Nav2 implementations. The RL policy uses the trained checkpoint produced by this project's training pipeline. All are evaluated under the same ROSMASTER M3 benchmark scenarios.
 
 ---
 
-## Sim-to-Real Focus
+## Sim-to-Real
 
-Training an RL policy in simulation is only the first step. The major technical challenge is transferring that policy safely and reliably to the real ROSMASTER M3.
+Training an RL policy in simulation is only the first step. Domain randomization during training covers:
 
-Key sim-to-real concerns include:
+- Lidar ray degradation, Gaussian scan noise, random ray dropout
+- Action delay (1–3 step command buffer)
+- Per-wheel motor strength scaling, wheel slip, wheel radius mismatch
+- Robot mass variation, center-of-mass shift
 
-- Sensor noise
-- Wheel slip
-- Command delay
-- Odometry drift
-- Velocity and acceleration limits
-- Observation mismatch between simulation and ROS2
-- Safe `/cmd_vel` output filtering
-
-The project will first validate the policy in simulation and then move toward real-robot testing.
+The policy is validated in simulation before real-robot testing. Key sim-to-real concerns include odometry drift, command latency, and ensuring the 1176-dim observation can be assembled correctly from live ROS 2 topics.
 
 ---
 
@@ -265,12 +380,14 @@ navrl-bench/
 │   ├── style.css
 │   └── script.js
 │
+├── training/
+│   └── dynamic_obstacle_avoidance/
+│       ├── source/   ← IsaacLab environment, MDP (obs, actions, rewards, curriculum)
+│       └── scripts/  ← RSL-RL PPO config, ScanHistoryTransformerActor
+│
 ├── .github/
 │   └── workflows/
 │       └── pr-check.yml
-│
-├── training/
-│   └── README.md
 │
 ├── nav2_configs/
 │   └── README.md
@@ -284,12 +401,9 @@ navrl-bench/
 └── README.md
 ```
 
-The structure may evolve as the project implementation progresses.
-
 ---
 
 ## Project Website
-
 
 <a href="https://pavansai018.github.io/navrl-bench" target="_blank">https://pavansai018.github.io/navrl-bench</a>
 
@@ -297,9 +411,7 @@ The structure may evolve as the project implementation progresses.
 
 ## Source Repository
 
-
 <a href="https://github.com/pavansai018/navrl-bench" target="_blank">https://github.com/pavansai018/navrl-bench</a>
-
 
 ---
 
@@ -309,11 +421,10 @@ This project is under active development.
 
 Current focus:
 
-- Finalizing website and documentation
-- Setting up ROSMASTER M3 project structure
-- Preparing Nav2 baseline configuration
-- Designing IsaacLab RL training workflow
-- Defining benchmark scenarios for dynamic-obstacle navigation
+- RL training with ScanHistoryTransformerActor and adaptive curriculum
+- Validating trained policy in simulation
+- Preparing Nav2 RL local controller plugin for policy deployment
+- Setting up benchmark evaluation pipeline
 
 ---
 

@@ -1,43 +1,35 @@
-# Copyright (c) 2021-2025, ETH Zurich and NVIDIA CORPORATION
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
-
 from __future__ import annotations
+
+from itertools import chain
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from itertools import chain
 from tensordict import TensorDict
-
 try:
-    from rsl_rl.modules import ActorCritic, ActorCriticRecurrent
-except ImportError:
-    # In some RSL-RL / IsaacLab versions these classes are not exported from
-    # rsl_rl.modules.__init__.py. For this PPO file they are only needed for
-    # typing and one recurrent-policy check. Your policy is non-recurrent.
-    ActorCritic = nn.Module
-
-    try:
-        from rsl_rl.modules.actor_critic_recurrent import ActorCriticRecurrent
-    except Exception:
-        class ActorCriticRecurrent(nn.Module):
-            pass
-from rsl_rl.modules.rnd import RandomNetworkDistillation
+    from rsl_rl.modules.rnd import RandomNetworkDistillation
+except ModuleNotFoundError:
+    RandomNetworkDistillation = None
 from rsl_rl.storage import RolloutStorage
 from rsl_rl.utils import string_to_callable
 
 
+class ActorCriticRecurrent(nn.Module):
+    """Dummy only for isinstance check. Your policy is not recurrent."""
+    pass
+
+
+RandomNetworkDistillation = None
+
 class PPO:
     """Proximal Policy Optimization algorithm (https://arxiv.org/abs/1707.06347)."""
 
-    policy: ActorCritic | ActorCriticRecurrent
+    policy: nn.Module
     """The actor critic module."""
 
     def __init__(
         self,
-        policy: ActorCritic | ActorCriticRecurrent,
+        policy: nn.Module,
         num_learning_epochs: int = 5,
         num_mini_batches: int = 4,
         clip_param: float = 0.2,
@@ -74,13 +66,22 @@ class PPO:
 
         # RND components
         if rnd_cfg is not None:
+            if RandomNetworkDistillation is None:
+                raise ImportError(
+                    "rnd_cfg was provided, but this installed rsl_rl version does not have "
+                    "rsl_rl.modules.rnd.RandomNetworkDistillation. Disable rnd_cfg or use the correct RSL-RL version."
+                )
+
             # Extract parameters used in ppo
             rnd_lr = rnd_cfg.pop("learning_rate", 1e-3)
+
             # Create RND module
             self.rnd = RandomNetworkDistillation(device=self.device, **rnd_cfg)
+
             # Create RND optimizer
             params = self.rnd.predictor.parameters()
             self.rnd_optimizer = optim.Adam(params, lr=rnd_lr)
+
         else:
             self.rnd = None
             self.rnd_optimizer = None

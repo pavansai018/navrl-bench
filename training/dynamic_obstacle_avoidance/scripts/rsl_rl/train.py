@@ -116,24 +116,44 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-
 from ppo_mod import PPO as PPOModified
 from scan_transformer_actor_critic import ActorCriticScanTransformer
 
-import rsl_rl.algorithms as rsl_algorithms
 import rsl_rl.modules as rsl_modules
 
-# Connect local modified PPO.
-# Your config can still use default class_name="PPO".
-# This replaces the PPO class used by OnPolicyRunner at runtime.
-rsl_algorithms.PPO = PPOModified
-rsl_on_policy_runner.PPO = PPOModified
+# Keep the original IsaacLab/RSL-RL PPO factory.
+# This object has construct_algorithm(...).
+OriginalRunnerPPO = rsl_on_policy_runner.PPO
 
-# Connect custom actor-critic.
+
+class PPOAuxFactory(OriginalRunnerPPO):
+    @staticmethod
+    def construct_algorithm(obs, env, cfg, device):
+        # Create the normal PPO algorithm using the original runner factory.
+        alg = OriginalRunnerPPO.construct_algorithm(obs, env, cfg, device)
+
+        # Replace only update() with your ppo_mod.PPO.update().
+        # This keeps IsaacLab's construction logic intact.
+        alg.update = PPOModified.update.__get__(alg, alg.__class__)
+
+        # Add aux loss coefficient from config.
+        alg_cfg = cfg.get("algorithm", {})
+        alg.aux_loss_coef = float(alg_cfg.get("aux_loss_coef", 0.05))
+
+        print("[PPO_MOD ACTIVE] using ppo_mod.PPO.update()", flush=True)
+        print("[PPO_MOD ACTIVE] aux_loss_coef =", alg.aux_loss_coef, flush=True)
+
+        return alg
+
+
+# Replace only the PPO factory used by OnPolicyRunner.
+rsl_on_policy_runner.PPO = PPOAuxFactory
+
+# Register custom actor-critic.
 rsl_modules.ActorCriticScanTransformer = ActorCriticScanTransformer
 rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
 
-print("[CUSTOM PPO] using local ppo_mod.PPO", flush=True)
+print("[CUSTOM PPO] using PPOAuxFactory wrapper", flush=True)
 print("[CUSTOM ACTOR] using ActorCriticScanTransformer", flush=True)
 
 torch.backends.cuda.matmul.allow_tf32 = True

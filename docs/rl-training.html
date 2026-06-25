@@ -4,23 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RL Training | NavRL Bench</title>
-  <meta name="description" content="Dedicated RL training page for NavRL Bench, covering IsaacLab training environment, PPO policy design, observations, actions, rewards, policy export, and Nav2 integration." />
-  <link rel="stylesheet" href="style.css" />
+  <meta name="description" content="Detailed RL training documentation for NavRL Bench — ScanHistoryTransformerActor, observation space, reward design, curriculum, PPO hyperparameters, and Nav2 integration." />
+  <link rel="stylesheet" href="style_draft.css" />
 </head>
 <body>
 
   <header class="site-header page-header">
     <nav class="navbar">
-      <a class="brand" href="index.html">NavRL Bench</a>
+      <a class="brand" href="index_draft.html">NavRL Bench</a>
 
       <div class="nav-right">
         <div class="nav-links">
-          <a href="index.html#overview">Overview</a>
-          <a href="index.html#pipeline">Pipeline</a>
-          <a href="rl-training.html">RL Training</a>
-          <a href="index.html#controllers">Controllers</a>
-          <a href="index.html#benchmark">Benchmark</a>
-          <a href="index.html#results">Results</a>
+          <a href="index_draft.html#overview">Overview</a>
+          <a href="index_draft.html#pipeline">Pipeline</a>
+          <a href="rl-training_draft.html" class="active">RL Training</a>
+          <a href="index_draft.html#controllers">Controllers</a>
+          <a href="index_draft.html#benchmark">Benchmark</a>
+          <a href="index_draft.html#results">Results</a>
         </div>
 
         <label class="theme-control" for="themeSelect">
@@ -38,16 +38,18 @@
     <section class="hero compact-hero">
       <img class="hero-robot-bg" src="assets/m3.jpeg" alt="ROSMASTER M3 robot" />
       <div class="hero-content">
-        <p class="eyebrow">Dedicated RL Training Page</p>
+        <p class="eyebrow">Scan Transformer · PPO · IsaacLab · Curriculum · Nav2</p>
         <h1>Training the RL Dynamic-Obstacle Avoidance Policy from Scratch</h1>
         <p class="hero-text">
-          This page documents the learning component of NavRL Bench: training a PPO-based local navigation policy for dynamic-obstacle avoidance
-          in IsaacLab / Isaac Sim, exporting the trained policy, and integrating it into the ROS2 / Nav2
-          local control pipeline.
+          This page documents the full RL training pipeline — ScanHistoryTransformerActor architecture,
+          1176-dim observation design, 20+ reward terms, adaptive obstacle curriculum,
+          domain randomization, and integration into the Nav2 local control pipeline for ROSMASTER M3.
         </p>
         <div class="hero-actions">
-          <a class="btn primary" href="index.html">Back to Project Home</a>
-          <a class="btn secondary" href="#training-pipeline">Training Pipeline</a>
+          <a class="btn primary" href="index_draft.html">Back to Project Home</a>
+          <a class="btn secondary" href="#architecture">Actor Architecture</a>
+          <a class="btn secondary" href="#observations">Observation Space</a>
+          <a class="btn secondary" href="#rewards">Reward Design</a>
         </div>
       </div>
     </section>
@@ -55,24 +57,50 @@
 
   <main>
 
+    <!-- WHY THIS PAGE -->
     <section class="section">
       <div class="section-header">
-        <p class="section-tag">Why this page exists</p>
+        <p class="section-tag">Why This Page Exists</p>
         <h2>RL training is the main engineering contribution</h2>
       </div>
 
       <div class="content-card">
         <p>
-          The classical controllers are available Nav2 baselines. The RL controller is different because it is
-          trained from scratch as part of this project.
+          The classical controllers (DWB, MPPI, RPP) are existing Nav2 baselines. The RL controller is different because it is
+          designed, trained, and validated entirely as part of this project.
         </p>
         <p>
-          This page separates the RL training work from the benchmark page so that the project clearly shows
-          environment design, policy training, reward shaping, policy export, and deployment planning.
+          This page documents every design decision: why a transformer over lidar rays instead of a flat MLP,
+          how the observation space splits policy from privileged critic information, what each of the 20+ reward terms does,
+          how the curriculum stages obstacle difficulty before introducing sensor noise and actuator delays,
+          and how the final policy is exported and loaded into the Nav2 local controller interface.
         </p>
       </div>
     </section>
 
+    <!-- KEY STATS -->
+    <section class="section" style="padding-top: 0;">
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value">1176</div>
+          <div class="stat-label">Policy Obs Dim</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">144</div>
+          <div class="stat-label">Lidar Rays</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">8</div>
+          <div class="stat-label">History Frames</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">20+</div>
+          <div class="stat-label">Reward Terms</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TRAINING PIPELINE -->
     <section id="training-pipeline" class="section">
       <div class="section-header">
         <p class="section-tag">Training Pipeline</p>
@@ -80,151 +108,809 @@
       </div>
 
       <div class="pipeline-box large-pipeline">
-        <div class="pipe-step">Create ROSMASTER M3 training environment</div>
+        <div class="pipe-step">Import ROSMASTER M3 URDF into IsaacLab (4 mecanum wheels, 0.035 m radius)</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step">Define observation space</div>
+        <div class="pipe-step">Load real Nav2 path dataset — AWS warehouse map, up to 600 path points per episode</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step">Define velocity action space</div>
+        <div class="pipe-step">Define 1176-dim policy observation and 1209-dim privileged critic observation</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step active">Train PPO policy from scratch</div>
+        <div class="pipe-step">Define 3D mecanum velocity action space [vx ≤ 0.5, vy ≤ 0.5, wz ≤ 1.5 rad/s]</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step">Validate policy in simulation</div>
+        <div class="pipe-step active">Train PPO with ScanHistoryTransformerActor — parallel envs, adaptive curriculum</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step">Export trained policy</div>
+        <div class="pipe-step">Adaptive curriculum: obstacle difficulty then sensor / actuator domain randomization</div>
         <div class="pipe-arrow">↓</div>
-        <div class="pipe-step">Load policy inside Nav2 local controller interface</div>
+        <div class="pipe-step">Validate policy in simulation — success rate, collision rate, path following quality</div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step">Export policy checkpoint → load inside Nav2 RL local controller node</div>
       </div>
     </section>
 
-    <section class="section">
+    <!-- ACTOR ARCHITECTURE -->
+    <section id="architecture" class="section">
+      <div class="section-header">
+        <p class="section-tag">Actor Architecture</p>
+        <h2>ScanHistoryTransformerActor</h2>
+      </div>
+
+      <div class="content-card" style="margin-bottom: 28px;">
+        <p>
+          Instead of processing each lidar snapshot independently, the actor treats each of the 144 lidar rays as a token
+          whose value is an 8-frame temporal history. This lets the transformer learn <em>ray-wise closing motion</em> —
+          detecting which specific angular sectors contain obstacles that are approaching — without ever receiving
+          explicit obstacle positions or velocities.
+        </p>
+        <p>
+          The critic, by contrast, receives ground-truth positions and velocities of the 4 nearest dynamic obstacles
+          as privileged information during training, allowing better value estimation without leaking this information
+          to the deployed policy.
+        </p>
+      </div>
+
+      <div class="arch-diagram">
+        <div class="arch-diagram-inner">
+
+          <p class="arch-label">Input split (1176-dim policy obs)</p>
+          <div class="arch-row">
+            <div class="arch-block primary">path [18]<br><small>8 waypoints + heading + CTE</small></div>
+            <div class="arch-block primary wide">scan_flat [1152]<br><small>8 frames × 144 rays, reshaped → [B, 8, 144]</small></div>
+            <div class="arch-block primary">motion [6]<br><small>vx, vy, wz + prev action</small></div>
+          </div>
+
+          <span class="arch-arrow-d">↓</span>
+
+          <p class="arch-label">Per-ray feature engineering (20 features per ray)</p>
+          <div class="arch-row">
+            <div class="arch-block wide">
+              8 normalized history values &nbsp;|&nbsp; 7 temporal deltas (frame[t−1] − frame[t]) &nbsp;|&nbsp;
+              current range &nbsp;|&nbsp; min range over 8 frames &nbsp;|&nbsp;
+              closing rate (frame[0] − frame[7]) &nbsp;|&nbsp; sin(θ), cos(θ)
+            </div>
+          </div>
+
+          <span class="arch-arrow-d">↓</span>
+
+          <p class="arch-label">Ray projection + positional embedding</p>
+          <div class="arch-row">
+            <div class="arch-block wide">Linear(20→128) → LayerNorm → GELU → Linear(128→128) &nbsp;+&nbsp; learned pos_embed [1, 144, 128]</div>
+          </div>
+
+          <span class="arch-arrow-d">↓</span>
+
+          <p class="arch-label">TransformerEncoder — 3 layers, d_model=128, nhead=4, ff_dim=256, norm_first=True</p>
+          <div class="arch-row">
+            <div class="arch-block primary wide">Ray tokens [B, 144, 128] — each token attends to all other rays</div>
+          </div>
+
+          <span class="arch-arrow-d">↓</span>
+
+          <p class="arch-label">Multi-pooling — three global summaries of the 144-ray token set</p>
+          <div class="arch-row">
+            <div class="arch-block">Attention pool [128]<br><small>learned importance weights</small></div>
+            <div class="arch-arrow-r">+</div>
+            <div class="arch-block">Min pool [128]<br><small>worst-case obstacle sectors</small></div>
+            <div class="arch-arrow-r">+</div>
+            <div class="arch-block">Mean pool [128]<br><small>global scene context</small></div>
+          </div>
+
+          <span class="arch-arrow-d">↓ (parallel)</span>
+
+          <p class="arch-label">Path and motion encoders</p>
+          <div class="arch-row">
+            <div class="arch-block">path_encoder [128]<br><small>Linear(18→128)→LN→GELU→Linear</small></div>
+            <div class="arch-arrow-r">+</div>
+            <div class="arch-block">motion_encoder [128]<br><small>Linear(6→128)→LN→GELU→Linear</small></div>
+          </div>
+
+          <span class="arch-arrow-d">↓</span>
+
+          <p class="arch-label">Fusion — concatenate all five streams → 5 × 128 = 640</p>
+          <div class="arch-row">
+            <div class="arch-block wide">[attn_pool | min_pool | mean_pool | path_feat | motion_feat] → 640</div>
+          </div>
+
+          <span class="arch-arrow-d">↓</span>
+
+          <p class="arch-label">Actor head</p>
+          <div class="arch-row">
+            <div class="arch-block wide">Linear(640→256) → LayerNorm → GELU → Linear(256→128) → LayerNorm → GELU → Linear(128→3)</div>
+          </div>
+
+          <span class="arch-arrow-d">↓</span>
+
+          <div class="arch-row">
+            <div class="arch-block accent wide">Output: [vx, vy, wz] — scaled to mecanum limits by action wrapper</div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="training-details" style="margin-top: 22px;">
+        <div class="detail-card">
+          <h3>Critic Network</h3>
+          <ul>
+            <li>Simple MLP: Linear(1209→256)→ELU→Linear(256→256)→ELU→Linear(256→128)→ELU→Linear(128→1)</li>
+            <li>Receives full 1209-dim privileged observation including dynamic obstacle states</li>
+            <li>Outputs scalar value estimate — not deployed, training-time only</li>
+          </ul>
+        </div>
+        <div class="detail-card">
+          <h3>Noise and Distribution</h3>
+          <ul>
+            <li>Scalar learnable std parameter, initialized to <code>0.3</code></li>
+            <li>Action distribution: <code>Normal(mean, std)</code></li>
+            <li>Sampling during training, deterministic <code>mean</code> at inference</li>
+            <li>Std clamped ≥ 1e-6 to prevent collapse</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- OBSERVATION SPACE -->
+    <section id="observations" class="section">
+      <div class="section-header">
+        <p class="section-tag">Observation Space</p>
+        <h2>Policy vs privileged critic observations</h2>
+      </div>
+
+      <div class="content-card" style="margin-bottom: 28px;">
+        <p>
+          The policy never receives raw obstacle positions or velocities — it must infer obstacle motion from lidar history alone.
+          The critic receives privileged ground-truth obstacle information during training to produce accurate value estimates,
+          without this information leaking to the deployed policy.
+        </p>
+      </div>
+
+      <p class="section-tag" style="margin-bottom: 16px;">Policy Observations — 1176 dimensions total</p>
+      <div class="table-wrap compact" style="margin-bottom: 32px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Term</th>
+              <th>Dim</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>local_path_window</strong> <span class="obs-badge policy">policy</span></td>
+              <td>16</td>
+              <td>8 future Nav2 path waypoints in robot frame (x, y per point), normalized by 4 m</td>
+            </tr>
+            <tr>
+              <td><strong>nav2_heading_error</strong> <span class="obs-badge policy">policy</span></td>
+              <td>1</td>
+              <td>Angular error between robot yaw and path tangent direction, wrapped to [−π, π] rad</td>
+            </tr>
+            <tr>
+              <td><strong>nav2_cross_track_error</strong> <span class="obs-badge policy">policy</span></td>
+              <td>1</td>
+              <td>Signed lateral distance from robot to the nearest Nav2 path point, in metres</td>
+            </tr>
+            <tr>
+              <td><strong>scan_history</strong> <span class="obs-badge policy">policy</span></td>
+              <td>1152</td>
+              <td>8-frame lidar history × 144 rays; 360° scan, 10 m range, 0.1 m step resolution. Flattened as [T, R]</td>
+            </tr>
+            <tr>
+              <td><strong>base_lin_vel</strong> <span class="obs-badge policy">policy</span></td>
+              <td>2</td>
+              <td>Robot linear velocity in world frame: (vx, vy) in m/s</td>
+            </tr>
+            <tr>
+              <td><strong>base_ang_vel</strong> <span class="obs-badge policy">policy</span></td>
+              <td>1</td>
+              <td>Robot yaw rate wz in rad/s</td>
+            </tr>
+            <tr>
+              <td><strong>previous_action</strong> <span class="obs-badge policy">policy</span></td>
+              <td>3</td>
+              <td>Last issued velocity command normalized to [−1, 1]: (vx, vy, wz)</td>
+            </tr>
+            <tr>
+              <td colspan="2"><strong>Total</strong></td>
+              <td><strong>1176</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="section-tag" style="margin-bottom: 16px;">Additional Critic Observations — 33 extra dims → 1209 total</p>
+      <div class="table-wrap compact">
+        <table>
+          <thead>
+            <tr>
+              <th>Term</th>
+              <th>Dim</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>dynamic_obstacles</strong> <span class="obs-badge critic">critic</span></td>
+              <td>24</td>
+              <td>4 nearest obstacles × 6 values each: [x, y, vx, vy, radius, active_flag] in robot frame</td>
+            </tr>
+            <tr>
+              <td><strong>path_blocked</strong> <span class="obs-badge critic">critic</span></td>
+              <td>1</td>
+              <td>Binary: 1 if any obstacle overlaps the forward path corridor</td>
+            </tr>
+            <tr>
+              <td><strong>time_to_closest_approach</strong> <span class="obs-badge critic">critic</span></td>
+              <td>4</td>
+              <td>2 obstacles × [time_to_closest_approach, distance_at_closest_approach]</td>
+            </tr>
+            <tr>
+              <td><strong>distance_to_goal</strong> <span class="obs-badge critic">critic</span></td>
+              <td>1</td>
+              <td>Euclidean distance from robot to final goal waypoint in metres</td>
+            </tr>
+            <tr>
+              <td><strong>progress_fraction</strong> <span class="obs-badge critic">critic</span></td>
+              <td>1</td>
+              <td>Fraction of Nav2 path completed so far [0, 1]</td>
+            </tr>
+            <tr>
+              <td><strong>map_collision</strong> <span class="obs-badge critic">critic</span></td>
+              <td>1</td>
+              <td>Binary: 1 if robot footprint overlaps the static occupancy map</td>
+            </tr>
+            <tr>
+              <td><strong>dynamic_collision</strong> <span class="obs-badge critic">critic</span></td>
+              <td>1</td>
+              <td>Binary: 1 if robot is in contact with any dynamic obstacle</td>
+            </tr>
+            <tr>
+              <td colspan="2"><strong>Critic Total</strong></td>
+              <td><strong>1209</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ACTION SPACE -->
+    <section id="actions" class="section">
+      <div class="section-header">
+        <p class="section-tag">Action Space</p>
+        <h2>3D mecanum velocity command</h2>
+      </div>
+
+      <div class="two-column">
+        <div>
+          <div class="content-card">
+            <p>
+              The policy outputs a 3D velocity command that maps directly to ROSMASTER M3's mecanum wheel configuration.
+              Lateral velocity (vy) enables the robot to strafe sideways — a capability absent in differential-drive robots
+              that the RL policy can learn to exploit for more elegant obstacle avoidance without rotating in place.
+            </p>
+            <p>
+              Actions are clipped to [−1, 1] by the actor head, then scaled by the per-axis limits below.
+              A rate limiter enforces smooth acceleration by clamping the change per step.
+              A static map action shield can override the command if it would drive into a known wall.
+            </p>
+          </div>
+        </div>
+
+        <div class="training-details single-column">
+          <div class="detail-card">
+            <h3>Velocity Limits</h3>
+            <ul>
+              <li>Forward: <code>vx ∈ [−0.5, +0.5] m/s</code></li>
+              <li>Lateral: <code>vy ∈ [−0.5, +0.5] m/s</code></li>
+              <li>Yaw: <code>wz ∈ [−1.5, +1.5] rad/s</code></li>
+            </ul>
+          </div>
+          <div class="detail-card">
+            <h3>Rate Limits (per RL step, 33 ms)</h3>
+            <ul>
+              <li>Δvx: <code>± 0.025 m/s</code></li>
+              <li>Δvy: <code>± 0.025 m/s</code></li>
+              <li>Δwz: <code>± 0.08 rad/s</code></li>
+            </ul>
+          </div>
+          <div class="detail-card">
+            <h3>Action Processing Pipeline</h3>
+            <ul>
+              <li>Clip to [−1, 1] → scale by limits</li>
+              <li>Apply action delay buffer (domain randomization)</li>
+              <li>Apply motor strength scaling (domain randomization)</li>
+              <li>Apply rate limiter (smooth acceleration)</li>
+              <li>Apply static map shield (block wall-collision commands)</li>
+              <li>Convert to wheel velocities via mecanum kinematics</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- REWARD FUNCTION -->
+    <section id="rewards" class="section">
+      <div class="section-header">
+        <p class="section-tag">Reward Design</p>
+        <h2>20+ terms covering path following, obstacle avoidance, and behavior shaping</h2>
+      </div>
+
+      <div class="content-card" style="margin-bottom: 28px;">
+        <p>
+          The reward function balances path-following, obstacle avoidance, goal reaching, and action regularity.
+          Dynamic obstacle rewards use only information available to the critic (obstacle states) to shape the value function,
+          while the policy learns avoidance from the scan history alone.
+          Behavioral shaping terms prevent degenerate strategies such as spinning in place or waiting indefinitely.
+        </p>
+      </div>
+
+      <!-- Path Following -->
+      <p class="section-tag" style="margin-bottom: 16px;">Path Following</p>
+      <div class="table-wrap compact" style="margin-bottom: 28px;">
+        <table>
+          <thead><tr><th>Reward Term</th><th>Weight</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>progress</strong></td>
+              <td><span class="w-pos">+35.0</span></td>
+              <td>Increase in cumulative arc-length progress along Nav2 path per step, clamped to [−0.05, +0.05] m</td>
+            </tr>
+            <tr>
+              <td><strong>goal_approach</strong></td>
+              <td><span class="w-pos">+5.0</span></td>
+              <td>Decrease in Euclidean distance to the final goal waypoint per step, clamped to [−0.08, +0.08] m</td>
+            </tr>
+            <tr>
+              <td><strong>cross_track</strong></td>
+              <td><span class="w-neg">−4.0</span></td>
+              <td>Penalty proportional to cross-track error (lateral distance from path), clamped to [0, 1.0] m</td>
+            </tr>
+            <tr>
+              <td><strong>path_rejoin</strong></td>
+              <td><span class="w-pos">+15.0</span></td>
+              <td>Reward for reducing cross-track error when CTE &gt; 0.2 m — encourages returning to path after bypass</td>
+            </tr>
+            <tr>
+              <td><strong>heading_alignment</strong></td>
+              <td><span class="w-pos">+8.0</span></td>
+              <td>cos(path_tangent_heading − robot_yaw) evaluated 4 steps ahead on the path lookahead</td>
+            </tr>
+            <tr>
+              <td><strong>path_velocity</strong></td>
+              <td><span class="w-pos">+6.0</span></td>
+              <td>Robot velocity projected onto path tangent direction, normalized by max_vx</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Dynamic Obstacle Avoidance -->
+      <p class="section-tag" style="margin-bottom: 16px;">Dynamic Obstacle Avoidance</p>
+      <div class="table-wrap compact" style="margin-bottom: 28px;">
+        <table>
+          <thead><tr><th>Reward Term</th><th>Weight</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>dynamic_collision</strong></td>
+              <td><span class="w-neg">−100.0</span></td>
+              <td>Direct contact with any dynamic obstacle — also terminates the episode</td>
+            </tr>
+            <tr>
+              <td><strong>dynamic_clearance</strong></td>
+              <td><span class="w-neg">−20.0</span></td>
+              <td>Obstacle closer than robot_radius + 0.25 m safety margin — per obstacle per step</td>
+            </tr>
+            <tr>
+              <td><strong>dynamic_ttc</strong></td>
+              <td><span class="w-neg">−15.0</span></td>
+              <td>Time-to-collision below safety threshold within 3 s prediction horizon — urgency signal</td>
+            </tr>
+            <tr>
+              <td><strong>dynamic_yield_no_side_space</strong></td>
+              <td><span class="w-pos">+8.0</span></td>
+              <td>Reward slowing down when obstacle blocks forward path and side corridors are also blocked (2 m lookahead, 0.55 m corridor width)</td>
+            </tr>
+            <tr>
+              <td><strong>wall_aware_dynamic_bypass</strong></td>
+              <td><span class="w-pos">+20.0</span></td>
+              <td>Reward lateral motion away from obstacle — only active when wall clearance exists on the bypass side</td>
+            </tr>
+            <tr>
+              <td><strong>dynamic_forward_blocked</strong></td>
+              <td><span class="w-neg">−12.0</span></td>
+              <td>Penalty for commanding forward velocity into a blocked forward corridor</td>
+            </tr>
+            <tr>
+              <td><strong>dynamic_bad_lateral</strong></td>
+              <td><span class="w-neg">−8.0</span></td>
+              <td>Penalty for strafing toward a wall side that has insufficient clearance</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Static Map Avoidance -->
+      <p class="section-tag" style="margin-bottom: 16px;">Static Map Avoidance</p>
+      <div class="table-wrap compact" style="margin-bottom: 28px;">
+        <table>
+          <thead><tr><th>Reward Term</th><th>Weight</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>map_collision</strong></td>
+              <td><span class="w-neg">−150.0</span></td>
+              <td>Robot footprint overlaps occupancy map — terminates episode; heaviest penalty</td>
+            </tr>
+            <tr>
+              <td><strong>static_velocity_clearance</strong></td>
+              <td><span class="w-neg">−15.0</span></td>
+              <td>Moving toward static obstacles within 0.3 m in a ±45° forward sector — proactive wall avoidance</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Goal Reaching -->
+      <p class="section-tag" style="margin-bottom: 16px;">Goal Reaching</p>
+      <div class="table-wrap compact" style="margin-bottom: 28px;">
+        <table>
+          <thead><tr><th>Reward Term</th><th>Weight</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>final_goal</strong></td>
+              <td><span class="w-pos">+120.0</span></td>
+              <td>Sparse bonus for reaching within 0.3 m of the final goal waypoint — also terminates episode successfully</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Action Regularization -->
+      <p class="section-tag" style="margin-bottom: 16px;">Action Regularization &amp; Behavior Shaping</p>
+      <div class="table-wrap compact">
+        <table>
+          <thead><tr><th>Reward Term</th><th>Weight</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>action_smoothness</strong></td>
+              <td><span class="w-neg">−0.06</span></td>
+              <td>L2 norm of action change per step — discourages jerky velocity commands</td>
+            </tr>
+            <tr>
+              <td><strong>yaw_rate</strong></td>
+              <td><span class="w-neg">−0.05</span></td>
+              <td>Absolute yaw rate |wz| per step — discourages spinning in place</td>
+            </tr>
+            <tr>
+              <td><strong>lateral_oscillation</strong></td>
+              <td><span class="w-neg">−0.35</span></td>
+              <td>Penalty for sign flip in lateral velocity vy between consecutive steps — discourages side-to-side oscillation</td>
+            </tr>
+            <tr>
+              <td><strong>time</strong></td>
+              <td><span class="w-neg">−0.06</span></td>
+              <td>Per-step time penalty — encourages goal-reaching over prolonged wandering</td>
+            </tr>
+            <tr>
+              <td><strong>no_wait</strong></td>
+              <td><span class="w-neg">−2.0</span></td>
+              <td>Penalty for near-zero speed (|v| &lt; 0.1 m/s) when path is not blocked — prevents waiting as a strategy</td>
+            </tr>
+            <tr>
+              <td><strong>start_speed</strong></td>
+              <td><span class="w-neg">−8.0</span></td>
+              <td>Penalty for slow speed during the first 1.5 s of each episode — prevents hesitation at episode start</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CURRICULUM -->
+    <section id="curriculum" class="section">
+      <div class="section-header">
+        <p class="section-tag">Curriculum Design</p>
+        <h2>Obstacles mastered before domain randomization</h2>
+      </div>
+
+      <div class="content-card" style="margin-bottom: 28px;">
+        <p>
+          The curriculum follows an <strong>obstacles_first</strong> strategy: the policy must first learn to handle increasingly
+          difficult obstacle configurations before sensor noise and actuator imperfections are introduced.
+          Promotion and demotion thresholds are evaluated continuously over a rolling 100,000-step performance window,
+          ensuring stable progression without premature advancement.
+        </p>
+      </div>
+
+      <div class="curriculum-grid">
+
+        <div class="curriculum-track">
+          <h4>Track 1 — Obstacle Difficulty</h4>
+          <div class="curriculum-step">
+            <span class="step-num">L0</span>
+            <div class="step-body"><strong>Open field</strong>No obstacles — pure goal-reaching and path-following behavior</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">L1</span>
+            <div class="step-body"><strong>Tiny stationary (center)</strong>Small obstacle (r 0.08–0.11 m) placed on the path</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">L2</span>
+            <div class="step-body"><strong>Tiny stationary (side)</strong>Same small obstacle offset ±0.05–0.20 m laterally</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">L3</span>
+            <div class="step-body"><strong>Small stationary (center)</strong>r 0.10–0.14 m, on-path placement</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">L4</span>
+            <div class="step-body"><strong>Small stationary (side)</strong>r 0.10–0.14 m, lateral offset</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">L5</span>
+            <div class="step-body"><strong>Medium stationary</strong>r 0.14–0.18 m — fills more of the corridor</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">L6</span>
+            <div class="step-body"><strong>Slow crossing obstacle</strong>r 0.10–0.15 m, speed 0.04–0.10 m/s, moving perpendicular to path</div>
+          </div>
+        </div>
+
+        <div class="curriculum-track">
+          <h4>Track 2 — Domain Randomization</h4>
+          <div class="curriculum-step">
+            <span class="step-num">DR0</span>
+            <div class="step-body"><strong>Lidar ray degradation</strong>Reduce active ray count — simulates sparse sensor</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">DR1</span>
+            <div class="step-body"><strong>Scan noise</strong>Gaussian range noise added to each ray measurement</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">DR2</span>
+            <div class="step-body"><strong>Scan dropout</strong>Random ray masking — simulates sensor blind spots</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">DR3</span>
+            <div class="step-body"><strong>Action delay</strong>Commands buffered by 1–3 steps to simulate motor latency</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">DR4</span>
+            <div class="step-body"><strong>Motor strength</strong>Per-wheel power scaling — simulates uneven drive</div>
+          </div>
+          <div class="curriculum-step">
+            <span class="step-num">DR5–9</span>
+            <div class="step-body"><strong>Mass, CoM, wheel radius, wheel slip, combined</strong>Physical parameter randomization for broad sim-to-real coverage</div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="table-wrap compact" style="margin-top: 28px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Promote Level</th>
+              <th>Demote Level</th>
+              <th>Window</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Success Rate</td>
+              <td class="promote">&gt; 70 %</td>
+              <td class="demote">&lt; 10 %</td>
+              <td class="dim">100 000 steps</td>
+            </tr>
+            <tr>
+              <td>Map Collision Rate</td>
+              <td class="promote">&lt; 20 %</td>
+              <td class="demote">&gt; 50 %</td>
+              <td class="dim">100 000 steps</td>
+            </tr>
+            <tr>
+              <td>Dynamic Collision Rate</td>
+              <td class="promote">&lt; 20 %</td>
+              <td class="demote">&gt; 50 %</td>
+              <td class="dim">100 000 steps</td>
+            </tr>
+            <tr>
+              <td>Timeout Rate</td>
+              <td class="promote">&lt; 15 %</td>
+              <td class="demote">&gt; 50 %</td>
+              <td class="dim">100 000 steps</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TRAINING ENVIRONMENT -->
+    <section id="environment" class="section">
       <div class="section-header">
         <p class="section-tag">Training Environment</p>
         <h2>IsaacLab / Isaac Sim setup</h2>
       </div>
 
       <div class="grid three">
-        <article class="info-card"><h3>Robot</h3><p>ROSMASTER M3 is used as the robot platform for training and benchmark consistency.</p></article>
-        <article class="info-card"><h3>Environment</h3><p>The training environment is designed around dynamic obstacle avoidance and goal-directed movement.</p></article>
-        <article class="info-card"><h3>Training Goal</h3><p>The policy should learn to output safe and useful velocity commands for avoiding dynamic obstacles while navigating toward the goal.</p></article>
+        <article class="info-card">
+          <h3>Simulation</h3>
+          <p>IsaacLab / Isaac Sim with PhysX TGS solver. Multiple parallel environments for efficient rollout collection. Physics at 120 Hz, RL step every 4 physics steps (33 ms effective control rate).</p>
+        </article>
+        <article class="info-card">
+          <h3>Navigation Data</h3>
+          <p>Real Nav2 path data from ROSMASTER M3 navigation runs in an AWS warehouse map. Up to 600 path points per episode, randomly sampled each reset. Static occupancy map used for action shielding and reward computation.</p>
+        </article>
+        <article class="info-card">
+          <h3>Robot Model</h3>
+          <p>ROSMASTER M3 with 4 mecanum wheels (0.035 m radius, wheelbase 0.0795 m × 0.0978 m). Root velocity applied directly during training; converted to wheel velocities for deployment.</p>
+        </article>
       </div>
-    </section>
 
-    <section class="section two-column">
-      <div>
-        <p class="section-tag">Policy Interface</p>
-        <h2>Observation and action design</h2>
-      </div>
-
-      <div class="training-details single-column">
+      <div class="training-details" style="margin-top: 22px;">
         <div class="detail-card">
-          <h3>Planned Observation Inputs</h3>
+          <h3>Episode Configuration</h3>
           <ul>
-            <li>Goal direction relative to the robot</li>
-            <li>Goal distance</li>
-            <li>Robot linear velocity</li>
-            <li>Robot angular velocity</li>
-            <li>Laser scan or compact local obstacle representation</li>
-            <li>Previous action for smoother behavior</li>
-            <li>Optional local path information from Nav2</li>
+            <li>Fixed time limit; terminated early on success, collision, or stuck detection</li>
+            <li>Start: robot placed at path start with small yaw noise</li>
+            <li>Goal: final Nav2 path waypoint, success threshold 0.3 m</li>
+            <li>Stuck detection: near-zero speed for an extended period terminates episode</li>
           </ul>
         </div>
-
         <div class="detail-card">
-          <h3>Planned Action Output</h3>
+          <h3>Lidar Sensor</h3>
           <ul>
-            <li>Linear velocity command</li>
-            <li>Angular velocity command</li>
-            <li>Action limits matched to ROSMASTER M3 safety limits</li>
-            <li>Output format compatible with <code>/cmd_vel</code></li>
+            <li>360° scan, 144 rays uniformly spaced (2.5° resolution)</li>
+            <li>Max range: 10 m; step resolution: 0.1 m</li>
+            <li>8-frame rolling history maintained per environment</li>
+            <li>Normalized to [0, 1] before feeding the actor; clamped at 4 m</li>
           </ul>
         </div>
       </div>
     </section>
 
-    <section class="section">
+    <!-- PPO HYPERPARAMETERS -->
+    <section id="ppo" class="section">
       <div class="section-header">
-        <p class="section-tag">Reward Design</p>
-        <h2>Training signal for navigation behavior</h2>
+        <p class="section-tag">Training Algorithm</p>
+        <h2>PPO configuration (RSL-RL)</h2>
       </div>
 
-      <div class="reward-grid">
-        <article class="reward-card positive">
-          <h3>Positive Rewards</h3>
-          <ul>
-            <li>Progress toward goal</li>
-            <li>Reaching the goal</li>
-            <li>Maintaining useful forward motion</li>
-            <li>Following safe local navigation behavior</li>
-          </ul>
-        </article>
+      <div class="two-column">
+        <div class="table-wrap compact">
+          <table>
+            <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+            <tbody>
+              <tr><td>Algorithm</td><td>PPO (RSL-RL)</td></tr>
+              <tr><td>LR schedule</td><td>Adaptive (KL-based)</td></tr>
+              <tr><td>Target KL</td><td>0.01</td></tr>
+              <tr><td>Clip parameter ε</td><td>0.2</td></tr>
+              <tr><td>Value loss coefficient</td><td>1.0</td></tr>
+              <tr><td>Entropy coefficient</td><td>0.00</td></tr>
+              <tr><td>Discount factor γ</td><td>0.99</td></tr>
+              <tr><td>GAE λ</td><td>0.95</td></tr>
+              <tr><td>Max gradient norm</td><td>1.0</td></tr>
+              <tr><td>Clipped value loss</td><td>Yes</td></tr>
+            </tbody>
+          </table>
+        </div>
 
-        <article class="reward-card negative">
-          <h3>Penalties</h3>
-          <ul>
-            <li>Collision with obstacles</li>
-            <li>Getting too close to obstacles</li>
-            <li>Unnecessary stopping</li>
-            <li>Moving away from the goal</li>
-            <li>Jerky or unstable velocity commands</li>
-          </ul>
-        </article>
+        <div class="training-details single-column">
+          <div class="detail-card">
+            <h3>Rollout Structure</h3>
+            <ul>
+              <li>N rollout steps per env per update, split into mini-batches</li>
+              <li>Multiple learning epochs per collected rollout (PPO reuse)</li>
+              <li>KL-adaptive learning rate — slows down when policy changes too fast</li>
+            </ul>
+          </div>
+          <div class="detail-card">
+            <h3>Experiment</h3>
+            <ul>
+              <li>Run name: <code>m3_obstacle_avoidance</code></li>
+              <li>Framework: RSL-RL with IsaacLab runner integration</li>
+              <li>Logs: TensorBoard — reward curves, curriculum level, collision rates</li>
+            </ul>
+          </div>
+        </div>
       </div>
-
-      <p class="note">
-        Reward terms will be updated based on training experiments. The final reward design will be documented with configuration files and ablation notes.
-      </p>
     </section>
 
-    <section class="section">
+    <!-- TERMINATION CONDITIONS -->
+    <section id="terminations" class="section">
       <div class="section-header">
-        <p class="section-tag">Training Strategy</p>
-        <h2>Curriculum toward fast dynamic-obstacle avoidance</h2>
+        <p class="section-tag">Termination Conditions</p>
+        <h2>When episodes end</h2>
       </div>
 
-      <p class="note">The final target is fast dynamic-obstacle avoidance. Simple goal reaching and static obstacles are used as curriculum stages before introducing moving obstacles.</p>
+      <div class="table-wrap compact">
+        <table>
+          <thead><tr><th>Condition</th><th>Threshold</th><th>Outcome</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Goal reached</strong></td>
+              <td>Distance to goal &lt; 0.3 m</td>
+              <td style="color: var(--accent); font-weight: 700;">Success — large sparse bonus applied</td>
+            </tr>
+            <tr>
+              <td><strong>Timeout</strong></td>
+              <td>Episode length &gt; 30 s (900 steps)</td>
+              <td style="color: var(--muted);">Failure — no bonus</td>
+            </tr>
+            <tr>
+              <td><strong>Map collision</strong></td>
+              <td>Robot footprint in static occupancy map</td>
+              <td style="color: var(--danger); font-weight: 700;">Failure — −150 penalty applied</td>
+            </tr>
+            <tr>
+              <td><strong>Dynamic collision</strong></td>
+              <td>Robot within contact distance of any obstacle</td>
+              <td style="color: var(--danger); font-weight: 700;">Failure — −100 penalty applied</td>
+            </tr>
+            <tr>
+              <td><strong>Stuck</strong></td>
+              <td>Speed &lt; 0.02 m/s for more than 2.0 s continuously (except near goal)</td>
+              <td style="color: var(--muted);">Failure — prevents indefinite stopping as a strategy</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- DOMAIN RANDOMIZATION -->
+    <section id="domain-randomization" class="section">
+      <div class="section-header">
+        <p class="section-tag">Domain Randomization</p>
+        <h2>Sim-to-real transfer preparation</h2>
+      </div>
 
       <div class="grid three">
-        <article class="scenario-card"><span>01</span><h3>Simple Goal Reaching</h3><p>The policy first learns basic movement toward a goal without complex obstacles.</p></article>
-        <article class="scenario-card"><span>02</span><h3>Static Obstacle Avoidance</h3><p>The environment introduces fixed obstacles so the policy learns safe local detours.</p></article>
-        <article class="scenario-card"><span>03</span><h3>Dynamic Obstacles</h3><p>Moving obstacles are added to evaluate adaptive behavior such as slowing, passing, or avoiding.</p></article>
-        <article class="scenario-card"><span>04</span><h3>Domain Randomization</h3><p>Training can randomize obstacle placement, start-goal pairs, friction, and sensor noise.</p></article>
-        <article class="scenario-card"><span>05</span><h3>Policy Validation</h3><p>The trained policy is tested in simulation before it is compared with Nav2 classical controllers.</p></article>
-        <article class="scenario-card"><span>06</span><h3>Export and Integration</h3><p>The final policy is exported and loaded by the RL local controller for benchmark evaluation.</p></article>
+        <article class="info-card">
+          <h3>Sensor Noise</h3>
+          <p>Lidar ray count degradation, Gaussian range noise, random ray dropout (simulating sensor blind spots and interference in real warehouse environments).</p>
+        </article>
+        <article class="info-card">
+          <h3>Actuator Imperfections</h3>
+          <p>Action delay (1–3 step command buffer), per-wheel motor strength scaling (uneven drive), left/right wheel slip coupling (friction loss on one side).</p>
+        </article>
+        <article class="info-card">
+          <h3>Physical Parameters</h3>
+          <p>Robot mass variations, center-of-mass shifts, wheel radius mismatch between left and right sides — covering manufacturing tolerances of the real ROSMASTER M3.</p>
+        </article>
       </div>
+
+      <p class="note">Domain randomization is applied after the policy reaches competence at each obstacle curriculum level, ensuring the policy first learns stable navigation before adapting to physical perturbations.</p>
     </section>
 
-    <section class="section two-column">
-      <div>
+    <!-- TRAINING DELIVERABLES -->
+    <section class="section">
+      <div class="section-header">
         <p class="section-tag">Training Deliverables</p>
-        <h2>Artifacts from the RL training pipeline</h2>
+        <h2>Artifacts produced by the training pipeline</h2>
       </div>
 
       <div class="content-card">
         <p>
-          The RL training pipeline generates the policy checkpoints, exported policy files,
-          training curves, validation logs, and simulation videos required to verify the
-          learning process.
+          The RL training pipeline generates policy checkpoints, exported policy files,
+          training curves (reward, curriculum level, collision rates), validation logs, and simulation videos
+          that demonstrate learning progress across curriculum stages.
         </p>
         <p>
-          These artifacts help demonstrate how the policy was trained, how its behavior
-          evolved during training, and how it is prepared for integration into the Nav2
-          local controller pipeline.
+          These artifacts verify that the policy was trained correctly, how behavior evolved as curriculum difficulty increased,
+          and that the exported policy is ready for integration into the Nav2 local controller pipeline.
         </p>
       </div>
+
+      <div class="metrics-grid" style="margin-top: 22px;">
+        <div>Training config</div>
+        <div>Reward config</div>
+        <div>Policy checkpoints</div>
+        <div>Exported policy</div>
+        <div>Training curves</div>
+        <div>Curriculum logs</div>
+        <div>Validation videos</div>
+        <div>Ablation notes</div>
+      </div>
     </section>
 
-    <section class="section">
-      <div class="section-header">
-        <p class="section-tag">Planned Artifacts</p>
-        <h2>Files and results to publish</h2>
-      </div>
-
-      <div class="metrics-grid">
-        <div>Training config</div><div>Reward config</div><div>Policy checkpoints</div><div>Exported policy</div>
-        <div>Training curves</div><div>Validation videos</div><div>Failure cases</div><div>Ablation notes</div>
-      </div>
-    </section>
-
+    <!-- CONNECTION TO BENCHMARK -->
     <section class="section">
       <div class="section-header">
         <p class="section-tag">Connection to Benchmark</p>
@@ -232,13 +918,13 @@
       </div>
 
       <div class="content-card">
-        <p>After training, the policy is integrated into the ROS2 / Nav2 local-control pipeline and evaluated against classical Nav2 controllers under the same ROSMASTER M3 benchmark scenarios.</p>
-        <p>This keeps the final comparison fair: classical controllers use their Nav2 implementations, while the RL controller uses the trained policy produced by this training pipeline.</p>
+        <p>After training, the policy checkpoint is loaded by a ROS 2 node that implements the Nav2 local controller plugin interface. On each control tick, it assembles the 1176-dim observation from Nav2 path data, lidar scan history, and odometry, runs a forward pass through the ScanHistoryTransformerActor, and publishes the resulting [vx, vy, wz] command on <code>/cmd_vel</code>.</p>
+        <p>This keeps the benchmark fair: DWB, MPPI, and RPP use their standard Nav2 implementations, while the RL controller uses the trained policy produced by this pipeline — all evaluated under the same ROSMASTER M3 scenarios and metrics.</p>
       </div>
 
       <div class="hero-actions section-actions">
-        <a class="btn primary" href="index.html#results">View Benchmark Table</a>
-        <a class="btn secondary" href="index.html#controllers">View Controller Baselines</a>
+        <a class="btn primary" href="index_draft.html#results">View Benchmark Table</a>
+        <a class="btn secondary" href="index_draft.html#controllers">View Controller Baselines</a>
       </div>
     </section>
 
@@ -253,15 +939,9 @@
 
       <div class="footer-contributors">
         <p class="footer-title">Project Contributors</p>
-
         <div class="contributor-list">
-          <a href="https://www.linkedin.com/in/pavansai18/" target="_blank" rel="noopener noreferrer">
-            Pavan Sai
-          </a>
-
-          <a href="https://www.linkedin.com/in/sivaalamkaram2002/" target="_blank" rel="noopener noreferrer">
-            Siva
-          </a>
+          <a href="https://www.linkedin.com/in/pavansai18/" target="_blank" rel="noopener noreferrer">Pavan Sai</a>
+          <a href="https://www.linkedin.com/in/sivaalamkaram2002/" target="_blank" rel="noopener noreferrer">Siva</a>
         </div>
       </div>
     </div>

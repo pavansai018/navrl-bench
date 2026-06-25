@@ -117,9 +117,24 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from ppo_mod import PPO as PPOModified
 from scan_transformer_actor_critic import ActorCriticScanTransformer
 
+import rsl_rl.algorithms as rsl_algorithms
+import rsl_rl.modules as rsl_modules
+
+# Connect local modified PPO.
+# Your config can still use default class_name="PPO".
+# This replaces the PPO class used by OnPolicyRunner at runtime.
+rsl_algorithms.PPO = PPOModified
+rsl_on_policy_runner.PPO = PPOModified
+
+# Connect custom actor-critic.
+rsl_modules.ActorCriticScanTransformer = ActorCriticScanTransformer
 rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
+
+print("[CUSTOM PPO] using local ppo_mod.PPO", flush=True)
+print("[CUSTOM ACTOR] using ActorCriticScanTransformer", flush=True)
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True

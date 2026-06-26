@@ -129,19 +129,22 @@ OriginalRunnerPPO = rsl_on_policy_runner.PPO
 class PPOAuxFactory(OriginalRunnerPPO):
     @staticmethod
     def construct_algorithm(obs, env, cfg, device):
-        # Create the normal PPO algorithm using the original runner factory.
-        alg = OriginalRunnerPPO.construct_algorithm(obs, env, cfg, device)
+        # Save and remove custom argument before standard PPO construction
+        aux_loss_coef = cfg["algorithm"].pop("aux_loss_coef", 0.02)
 
-        # Replace only update() with your ppo_mod.PPO.update().
-        # This keeps IsaacLab's construction logic intact.
+        alg = OriginalRunnerPPO.construct_algorithm(
+            obs, env, cfg, device
+        )
+
+        # Activate modified PPO update
         alg.update = PPOModified.update.__get__(alg, alg.__class__)
+        alg.aux_loss_coef = float(aux_loss_coef)
 
-        # Add aux loss coefficient from config.
-        alg_cfg = cfg.get("algorithm", {})
-        alg.aux_loss_coef = float(alg_cfg.get("aux_loss_coef", 0.05))
-
-        print("[PPO_MOD ACTIVE] using ppo_mod.PPO.update()", flush=True)
-        print("[PPO_MOD ACTIVE] aux_loss_coef =", alg.aux_loss_coef, flush=True)
+        print(
+            "[PPO_MOD ACTIVE] aux_loss_coef =",
+            alg.aux_loss_coef,
+            flush=True,
+        )
 
         return alg
 

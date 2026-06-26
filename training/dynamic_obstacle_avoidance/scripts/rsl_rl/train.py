@@ -116,44 +116,20 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from ppo_mod import PPO as PPOModified
+# from ppo_mod import PPO as PPOModified
 from scan_transformer_actor_critic import ActorCriticScanTransformer
 
 import rsl_rl.modules as rsl_modules
 
-# Keep the original IsaacLab/RSL-RL PPO factory.
-# This object has construct_algorithm(...).
-OriginalRunnerPPO = rsl_on_policy_runner.PPO
-
-
-class PPOAuxFactory(OriginalRunnerPPO):
-    @staticmethod
-    def construct_algorithm(obs, env, cfg, device):
-        # Create the normal PPO algorithm using the original runner factory.
-        alg = OriginalRunnerPPO.construct_algorithm(obs, env, cfg, device)
-
-        # Replace only update() with your ppo_mod.PPO.update().
-        # This keeps IsaacLab's construction logic intact.
-        alg.update = PPOModified.update.__get__(alg, alg.__class__)
-
-        # Add aux loss coefficient from config.
-        alg_cfg = cfg.get("algorithm", {})
-        alg.aux_loss_coef = float(alg_cfg.get("aux_loss_coef", 0.05))
-
-        print("[PPO_MOD ACTIVE] using ppo_mod.PPO.update()", flush=True)
-        print("[PPO_MOD ACTIVE] aux_loss_coef =", alg.aux_loss_coef, flush=True)
-
-        return alg
-
-
-# Replace only the PPO factory used by OnPolicyRunner.
-rsl_on_policy_runner.PPO = PPOAuxFactory
+# Use local PPO copied from the same installed RSL-RL version.
+# This PPO has construct_algorithm(), so it can replace runner PPO directly.
+# rsl_on_policy_runner.PPO = PPOModified
 
 # Register custom actor-critic.
 rsl_modules.ActorCriticScanTransformer = ActorCriticScanTransformer
 rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
 
-print("[CUSTOM PPO] using PPOAuxFactory wrapper", flush=True)
+# print("[CUSTOM PPO] using full local ppo_mod.PPO", flush=True)
 print("[CUSTOM ACTOR] using ActorCriticScanTransformer", flush=True)
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -252,12 +228,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.class_name == "OnPolicyRunner":
         agent_cfg_dict = agent_cfg.to_dict()
 
-        # IsaacLab/RSL-RL version compatibility fix:
-        # Some IsaacLab versions add this key, but my installed rsl_rl PPO does not accept it.
         agent_cfg_dict["algorithm"].pop("share_cnn_encoders", None)
-        # runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-        rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
-        runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=log_dir, device=agent_cfg.device)
+
+        runner = OnPolicyRunner(
+            env,
+            agent_cfg_dict,
+            log_dir=log_dir,
+            device=agent_cfg.device,
+        )
+
+        print(
+            "[PPO_MOD ACTIVE] runner.alg =",
+            type(runner.alg),
+            flush=True,
+        )
 
     elif agent_cfg.class_name == "DistillationRunner":
         runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)

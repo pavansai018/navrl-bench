@@ -12,6 +12,7 @@ from isaaclab_rl.rsl_rl import (
 
 @configclass
 class RslRlPpoAuxAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    class_name: str = "ppo_mod.PPO"
     aux_loss_coef: float = 0.05
 
 

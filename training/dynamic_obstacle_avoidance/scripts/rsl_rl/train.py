@@ -116,21 +116,20 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from ppo_mod import PPO as PPOModified
+# from ppo_mod import PPO as PPOModified
 from scan_transformer_actor_critic import ActorCriticScanTransformer
 
 import rsl_rl.modules as rsl_modules
 
-# Keep the original IsaacLab/RSL-RL PPO factory.
-# This object has construct_algorithm(...).
-OriginalRunnerPPO = rsl_on_policy_runner.PPO
-
+# Use local PPO copied from the same installed RSL-RL version.
+# This PPO has construct_algorithm(), so it can replace runner PPO directly.
+# rsl_on_policy_runner.PPO = PPOModified
 
 # Register custom actor-critic.
 rsl_modules.ActorCriticScanTransformer = ActorCriticScanTransformer
 rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
 
-print("[CUSTOM PPO] using PPOAuxFactory wrapper", flush=True)
+# print("[CUSTOM PPO] using full local ppo_mod.PPO", flush=True)
 print("[CUSTOM ACTOR] using ActorCriticScanTransformer", flush=True)
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -231,11 +230,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         agent_cfg_dict["algorithm"].pop("share_cnn_encoders", None)
 
-        # Standard PPO does not accept this argument.
-        aux_loss_coef = agent_cfg_dict["algorithm"].pop(
-            "aux_loss_coef", 0.02
-        )
-
         runner = OnPolicyRunner(
             env,
             agent_cfg_dict,
@@ -243,15 +237,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             device=agent_cfg.device,
         )
 
-        # Attach the modified update after standard PPO is constructed.
-        runner.alg.update = PPOModified.update.__get__(
-            runner.alg, runner.alg.__class__
-        )
-        runner.alg.aux_loss_coef = float(aux_loss_coef)
-
         print(
-            "[PPO_MOD ACTIVE] aux_loss_coef =",
-            runner.alg.aux_loss_coef,
+            "[PPO_MOD ACTIVE] runner.alg =",
+            type(runner.alg),
             flush=True,
         )
 

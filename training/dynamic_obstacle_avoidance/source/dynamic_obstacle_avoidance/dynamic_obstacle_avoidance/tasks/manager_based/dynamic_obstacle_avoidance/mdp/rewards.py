@@ -742,3 +742,6 @@ def dynamic_bad_lateral_penalty(
     lateral_speed = torch.clamp(torch.abs(v_lat) / max_vy, 0.0, 1.0)
 
     return valid.float() * bad.float() * lateral_speed
+
+def timeout_penalty(env) -> torch.Tensor:
+    return (env.episode_length_buf >= env.max_episode_length - 1).float()

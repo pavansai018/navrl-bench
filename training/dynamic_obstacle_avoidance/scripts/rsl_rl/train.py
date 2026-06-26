@@ -254,6 +254,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+        with torch.no_grad():
+            for name, param in runner.alg.actor.named_parameters():
+                if "log_std" in name:
+                    import math
+                    param.fill_(math.log(0.25))
+                    print("[STD FIX] set", name, "to log(0.25)", flush=True)
+                elif "std" in name or "sigma" in name:
+                    param.fill_(0.25)
+                    print("[STD FIX] set", name, "to 0.25", flush=True)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

@@ -117,6 +117,7 @@ REWARDS: dict = {
     'dynamic_yield_no_side_space': {'weight': 8.0, 'lookahead_m': 2.0, 'corridor_half_width': 0.55, 'min_side_clearance': 0.45,},
     'dynamic_forward_blocked': {'weight': -12.0, 'lookahead_m': 2.0, 'corridor_half_width': 0.55,},
     'dynamic_bad_lateral': {'weight': -8.0, 'lookahead_m': 2.0, 'corridor_half_width': 0.55, 'min_side_clearance': 0.45,},
+    'timeout_failure': {'weight': -80.0},
 }
 
 TERMINATIONS: dict = {

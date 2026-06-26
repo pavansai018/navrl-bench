@@ -126,32 +126,6 @@ import rsl_rl.modules as rsl_modules
 OriginalRunnerPPO = rsl_on_policy_runner.PPO
 
 
-class PPOAuxFactory(OriginalRunnerPPO):
-    @staticmethod
-    def construct_algorithm(obs, env, cfg, device):
-        # Save and remove custom argument before standard PPO construction
-        aux_loss_coef = cfg["algorithm"].pop("aux_loss_coef", 0.02)
-
-        alg = OriginalRunnerPPO.construct_algorithm(
-            obs, env, cfg, device
-        )
-
-        # Activate modified PPO update
-        alg.update = PPOModified.update.__get__(alg, alg.__class__)
-        alg.aux_loss_coef = float(aux_loss_coef)
-
-        print(
-            "[PPO_MOD ACTIVE] aux_loss_coef =",
-            alg.aux_loss_coef,
-            flush=True,
-        )
-
-        return alg
-
-
-# Replace only the PPO factory used by OnPolicyRunner.
-rsl_on_policy_runner.PPO = PPOAuxFactory
-
 # Register custom actor-critic.
 rsl_modules.ActorCriticScanTransformer = ActorCriticScanTransformer
 rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
@@ -255,12 +229,31 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.class_name == "OnPolicyRunner":
         agent_cfg_dict = agent_cfg.to_dict()
 
-        # IsaacLab/RSL-RL version compatibility fix:
-        # Some IsaacLab versions add this key, but my installed rsl_rl PPO does not accept it.
         agent_cfg_dict["algorithm"].pop("share_cnn_encoders", None)
-        # runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-        rsl_on_policy_runner.ActorCriticScanTransformer = ActorCriticScanTransformer
-        runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=log_dir, device=agent_cfg.device)
+
+        # Standard PPO does not accept this argument.
+        aux_loss_coef = agent_cfg_dict["algorithm"].pop(
+            "aux_loss_coef", 0.02
+        )
+
+        runner = OnPolicyRunner(
+            env,
+            agent_cfg_dict,
+            log_dir=log_dir,
+            device=agent_cfg.device,
+        )
+
+        # Attach the modified update after standard PPO is constructed.
+        runner.alg.update = PPOModified.update.__get__(
+            runner.alg, runner.alg.__class__
+        )
+        runner.alg.aux_loss_coef = float(aux_loss_coef)
+
+        print(
+            "[PPO_MOD ACTIVE] aux_loss_coef =",
+            runner.alg.aux_loss_coef,
+            flush=True,
+        )
 
     elif agent_cfg.class_name == "DistillationRunner":
         runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)

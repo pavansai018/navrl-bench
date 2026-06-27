@@ -81,6 +81,7 @@ OBSERVATIONS: dict = {
         'dynamic_collision': {},
         'scan_history': {'params': {'history_len': 8, 'num_rays': 144, 'max_range': 10.0, 'step_size': 0.10,}},
         'future_path_blocked_1s': {'params': {'lookahead_points': 32, 'path_radius': 0.35, 'horizon_s': 1.0,}},
+        'path_blocked_now_or_future_1s': {'params': {"lookahead_points": 32, "path_radius": 0.35, 'horizon_s': 1.0},},
 
     },
 }

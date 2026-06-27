@@ -8,9 +8,7 @@ from torch.distributions import Normal
 
 
 POLICY_OBS_DIM = 1176
-# CRITIC_OBS_DIM = 1209
-CRITIC_OBS_DIM = 1210
-VALUE_CRITIC_INPUT_DIM = 1209
+CRITIC_OBS_DIM = 1209
 
 
 def get_activation(name: str) -> nn.Module:
@@ -359,10 +357,8 @@ class ActorCriticScanTransformer(nn.Module):
             ff_dim=256,
         )
 
-        self.value_critic_input_dim = VALUE_CRITIC_INPUT_DIM
-
         self.critic = build_mlp(
-            input_dim=self.value_critic_input_dim,
+            input_dim=critic_obs_dim,
             hidden_dims=critic_hidden_dims,
             output_dim=1,
             activation=activation,
@@ -556,7 +552,7 @@ class ActorCriticScanTransformer(nn.Module):
 
     def evaluate(self, critic_observations, **kwargs) -> torch.Tensor:
         critic_obs = select_obs(critic_observations, "critic")
-        return self.critic(critic_obs[:, : self.value_critic_input_dim])
+        return self.critic(critic_obs)
 
     def get_actions_log_prob(self, actions: torch.Tensor) -> torch.Tensor:
         return self.distribution.log_prob(actions).sum(dim=-1)

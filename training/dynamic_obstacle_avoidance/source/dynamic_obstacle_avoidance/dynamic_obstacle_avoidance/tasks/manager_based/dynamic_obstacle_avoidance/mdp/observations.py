@@ -717,3 +717,39 @@ def future_path_blocked_1s(
         blocked = blocked | hit.any(dim=-1)
 
     return blocked.float().unsqueeze(-1)
+
+
+def path_blocked_now_or_future_1s(
+    env,
+    lookahead_points: int = 32,
+    path_radius: float = 0.35,
+    horizon_s: float = 1.0,
+) -> torch.Tensor:
+    """
+    Same shape as old path_blocked: [num_envs, 1]
+
+    This replaces the critic-only path_blocked scalar without changing critic obs dim.
+
+    1 = path blocked now OR predicted to be blocked after horizon_s.
+    """
+
+    now_blocked = dynamic_path_blockage(
+        env,
+        lookahead_points=lookahead_points,
+        path_radius=path_radius,
+    )
+
+    if now_blocked.dim() == 1:
+        now_blocked = now_blocked.unsqueeze(-1)
+
+    future_blocked = future_path_blocked_1s(
+        env,
+        lookahead_points=lookahead_points,
+        path_radius=path_radius,
+        horizon_s=horizon_s,
+    )
+
+    return torch.maximum(
+        now_blocked.float().clamp(0.0, 1.0),
+        future_blocked.float().clamp(0.0, 1.0),
+    )

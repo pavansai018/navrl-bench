@@ -195,9 +195,13 @@ class ObservationsCfg:
             func=custom_observations.dynamic_obstacle_states,
             params=config.OBSERVATIONS['critic']['dynamic_obstacles']['params'],
         )
+        # path_blocked = ObsTerm(
+        #     func=custom_observations.dynamic_path_blockage,
+        #     params=config.OBSERVATIONS['critic']['path_blocked']['params'],
+        # )
         path_blocked = ObsTerm(
-            func=custom_observations.dynamic_path_blockage,
-            params=config.OBSERVATIONS['critic']['path_blocked']['params'],
+            func=custom_observations.path_blocked_now_or_future_1s,
+            params=config.OBSERVATIONS['critic']['path_blocked_now_or_future_1s']['params'],
         )
 
         time_to_closest_approach = ObsTerm(
@@ -214,10 +218,10 @@ class ObservationsCfg:
         map_collision = ObsTerm(func=custom_observations.map_collision_observation)
         dynamic_collision = ObsTerm(func=custom_observations.dynamic_collision_observation)
 
-        future_path_blocked_1s = ObsTerm(
-            func=custom_observations.future_path_blocked_1s,
-            params=config.OBSERVATIONS['critic']['future_path_blocked_1s']['params'],
-        )
+        # future_path_blocked_1s = ObsTerm(
+        #     func=custom_observations.future_path_blocked_1s,
+        #     params=config.OBSERVATIONS['critic']['future_path_blocked_1s']['params'],
+        # )
 
         def __post_init__(self) -> None:
             self.enable_corruption = False

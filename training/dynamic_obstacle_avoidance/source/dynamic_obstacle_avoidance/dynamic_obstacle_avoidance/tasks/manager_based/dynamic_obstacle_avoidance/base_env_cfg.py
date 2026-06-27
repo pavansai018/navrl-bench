@@ -559,7 +559,7 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     mppi_teacher: dict = config.MPPI_TEACHER
 
     # Tensor dynamic obstacle/curriculum configuration.
-    max_dynamic_obstacles: int = 6
+    max_dynamic_obstacles: int = 20
     dynamic_obstacle_radius_min: float = 0.18
     dynamic_obstacle_radius_max: float = 0.32
     dynamic_obstacle_deactivate_range: float = 6.0

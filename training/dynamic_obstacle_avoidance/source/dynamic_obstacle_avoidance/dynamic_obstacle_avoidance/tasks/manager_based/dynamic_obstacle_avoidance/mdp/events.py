@@ -284,6 +284,18 @@ def _ensure_dynamic_obstacle_buffers(env):
         env.dyn_obs_scenario = torch.zeros(
             env.num_envs, num_obs, dtype=torch.long, device=device
         )
+    
+    if needs_resize("dyn_obs_phase", (env.num_envs, num_obs)):
+        env.dyn_obs_phase = torch.zeros(env.num_envs, num_obs, device=device)
+
+    if needs_resize("dyn_obs_omega", (env.num_envs, num_obs)):
+        env.dyn_obs_omega = torch.zeros(env.num_envs, num_obs, device=device)
+
+    if needs_resize("dyn_obs_amp", (env.num_envs, num_obs)):
+        env.dyn_obs_amp = torch.zeros(env.num_envs, num_obs, device=device)
+
+    if needs_resize("dyn_obs_normal", (env.num_envs, num_obs, 2)):
+        env.dyn_obs_normal = torch.zeros(env.num_envs, num_obs, 2, device=device)
 
     if not hasattr(env, "navrl_reset_count"):
         env.navrl_reset_count = torch.zeros(env.num_envs, dtype=torch.long, device=device)
@@ -341,6 +353,10 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
     env.dyn_obs_vel_xy[env_ids] = 0.0
     env.dyn_obs_radius[env_ids] = 0.0
     env.dyn_obs_scenario[env_ids] = 0
+    env.dyn_obs_phase[env_ids] = 0.0
+    env.dyn_obs_omega[env_ids] = 0.0
+    env.dyn_obs_amp[env_ids] = 0.0
+    env.dyn_obs_normal[env_ids] = 0.0
 
     path = env.navrl_global_path_xy
     valid_count = env.navrl_path_valid_count
@@ -482,6 +498,9 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
                 vel = torch.zeros(2, device=env.device)
                 scenario = 1
 
+            elif mode == "real_room_dynamic_clutter":
+                continue
+
             else:  # two_crossing_combo
                 radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
                 offset = side * torch.empty((), device=env.device).uniform_(0.80, 1.30)
@@ -489,6 +508,15 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
                 pos = p0 + offset * normal
                 vel = -side * speed * normal
                 scenario = 2
+
+            if "real_room_dynamic_clutter" in modes:
+                _spawn_real_room_dynamic_clutter(
+                    env=env,
+                    env_id=env_id,
+                    path_xy=path[env_id],
+                    valid_count=vc,
+                    num_obs=num_obs,
+                )
 
             env.dyn_obs_xy[env_id, j] = pos
             env.dyn_obs_vel_xy[env_id, j] = vel
@@ -506,6 +534,30 @@ def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
 
     dt = float(getattr(env, "step_dt", getattr(env, "physics_dt", 1.0 / 30.0)))
     env.dyn_obs_xy[env_ids] += env.dyn_obs_vel_xy[env_ids] * dt * env.dyn_obs_active[env_ids].unsqueeze(-1).float()
+
+    # Nonlinear motion for scenario 4:
+    # linear forward motion + sinusoidal sideways wobble.
+    nonlinear_mask = env.dyn_obs_active[env_ids] & (env.dyn_obs_scenario[env_ids] == 4)
+
+    if torch.any(nonlinear_mask):
+        old_phase = env.dyn_obs_phase[env_ids].clone()
+
+        env.dyn_obs_phase[env_ids] += (
+            env.dyn_obs_omega[env_ids]
+            * dt
+            * nonlinear_mask.float()
+        )
+
+        delta_wobble = (
+            torch.sin(env.dyn_obs_phase[env_ids])
+            - torch.sin(old_phase)
+        ) * env.dyn_obs_amp[env_ids]
+
+        env.dyn_obs_xy[env_ids] += (
+            env.dyn_obs_normal[env_ids]
+            * delta_wobble.unsqueeze(-1)
+            * nonlinear_mask.unsqueeze(-1).float()
+        )
 
     # Deactivate obstacles far from robot; next reset creates new scenarios.
     robot = env.scene["robot"]
@@ -1139,6 +1191,104 @@ def get_curriculum_sublevels(env, raw_level: int) -> tuple[int, int]:
         dr_level = max(0, min(raw_level - num_obstacle_levels, num_dr_levels))
 
     return obstacle_level, dr_level
+
+def _spawn_real_room_dynamic_clutter(
+    env,
+    env_id: int,
+    path_xy: torch.Tensor,
+    valid_count: int,
+    num_obs: int,
+):
+    """Extra deployment-style obstacle level.
+
+    Adds:
+    - static clutter like chairs/tables
+    - nonlinear moving obstacles
+    - obstacles sampled across the whole path, not only early path
+    """
+
+    if valid_count < 20:
+        return
+
+    free_slots = torch.nonzero(~env.dyn_obs_active[env_id], as_tuple=False).flatten()
+    if free_slots.numel() == 0:
+        return
+
+    # Use up to 5 extra obstacles for this real-room stage.
+    # 3 static clutter + 2 nonlinear movers if slots are available.
+    max_extra = min(5, int(free_slots.numel()))
+    slots = free_slots[:max_extra]
+
+    n_static = min(3, max_extra)
+    n_moving = max_extra - n_static
+
+    start_idx = max(5, int(0.10 * valid_count))
+    end_idx = max(start_idx + 1, min(valid_count - 5, int(0.90 * valid_count)))
+
+    # -------------------------
+    # Static table/chair clutter
+    # -------------------------
+    for k in range(n_static):
+        slot = int(slots[k].item())
+
+        idx = int(torch.randint(start_idx, end_idx, (1,), device=env.device).item())
+
+        p0 = path_xy[idx]
+        p1 = path_xy[min(idx + 4, valid_count - 1)]
+
+        tangent = p1 - p0
+        tangent = tangent / torch.norm(tangent).clamp_min(1e-6)
+        normal = torch.stack([-tangent[1], tangent[0]])
+
+        side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
+
+        # Table/chair-like static clutter near, but not always exactly on, the path.
+        lateral_offset = side * torch.empty((), device=env.device).uniform_(0.35, 1.30)
+        along_jitter = torch.empty((), device=env.device).uniform_(-0.30, 0.30)
+
+        pos = p0 + lateral_offset * normal + along_jitter * tangent
+
+        radius = torch.empty((), device=env.device).uniform_(0.18, 0.38)
+
+        env.dyn_obs_xy[env_id, slot] = pos
+        env.dyn_obs_vel_xy[env_id, slot] = 0.0
+        env.dyn_obs_radius[env_id, slot] = radius
+        env.dyn_obs_active[env_id, slot] = True
+        env.dyn_obs_scenario[env_id, slot] = 5  # static clutter
+
+    # -------------------------
+    # Nonlinear moving obstacles
+    # -------------------------
+    for k in range(n_moving):
+        slot = int(slots[n_static + k].item())
+
+        idx = int(torch.randint(start_idx, end_idx, (1,), device=env.device).item())
+
+        p0 = path_xy[idx]
+        p1 = path_xy[min(idx + 6, valid_count - 1)]
+
+        tangent = p1 - p0
+        tangent = tangent / torch.norm(tangent).clamp_min(1e-6)
+        normal = torch.stack([-tangent[1], tangent[0]])
+
+        side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
+
+        lateral_offset = side * torch.empty((), device=env.device).uniform_(0.60, 1.50)
+        pos = p0 + lateral_offset * normal
+
+        speed = torch.empty((), device=env.device).uniform_(0.08, 0.25)
+        radius = torch.empty((), device=env.device).uniform_(0.12, 0.24)
+
+        env.dyn_obs_xy[env_id, slot] = pos
+        env.dyn_obs_vel_xy[env_id, slot] = speed * tangent
+        env.dyn_obs_radius[env_id, slot] = radius
+        env.dyn_obs_active[env_id, slot] = True
+        env.dyn_obs_scenario[env_id, slot] = 4  # nonlinear mover
+
+        env.dyn_obs_phase[env_id, slot] = torch.empty((), device=env.device).uniform_(0.0, 2.0 * math.pi)
+        env.dyn_obs_omega[env_id, slot] = torch.empty((), device=env.device).uniform_(0.8, 1.8)
+        env.dyn_obs_amp[env_id, slot] = torch.empty((), device=env.device).uniform_(0.15, 0.45)
+        env.dyn_obs_normal[env_id, slot] = normal
 
 def print_curriculum_training_metrics(env, env_ids: torch.Tensor | None = None):
     if not hasattr(env, "dyn_obs_active"):

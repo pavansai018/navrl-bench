@@ -8,7 +8,9 @@ from torch.distributions import Normal
 
 
 POLICY_OBS_DIM = 1176
-CRITIC_OBS_DIM = 1209
+# CRITIC_OBS_DIM = 1209
+CRITIC_OBS_DIM = 1210
+VALUE_CRITIC_INPUT_DIM = 1209
 
 
 def get_activation(name: str) -> nn.Module:
@@ -357,8 +359,10 @@ class ActorCriticScanTransformer(nn.Module):
             ff_dim=256,
         )
 
+        self.value_critic_input_dim = VALUE_CRITIC_INPUT_DIM
+
         self.critic = build_mlp(
-            input_dim=critic_obs_dim,
+            input_dim=self.value_critic_input_dim,
             hidden_dims=critic_hidden_dims,
             output_dim=1,
             activation=activation,
@@ -465,54 +469,73 @@ class ActorCriticScanTransformer(nn.Module):
         dynamic_collision = critic_obs[:, 1208:1209].float().clamp(0.0, 1.0)
         dynamic_risk = torch.maximum(dynamic_risk, dynamic_collision)
 
-        return path_blocked, dynamic_risk
+        if critic_obs.shape[1] > 1209:
+            future_path_blocked = critic_obs[:, 1209:1210].float().clamp(0.0, 1.0)
+        else:
+            future_path_blocked = path_blocked
+        future_danger = torch.maximum(dynamic_risk, future_path_blocked)
+        return path_blocked, future_danger
 
     def auxiliary_loss(
         self,
         actor_observations,
         critic_observations,
     ) -> tuple[torch.Tensor, dict[str, float]]:
+        """
+        Training-only auxiliary supervision.
+
+        Head 1:
+            predict path blocked now
+
+        Head 2:
+            predict future danger =
+            max(old TTC/DCA dynamic risk, future_path_blocked_1s)
+
+        Actor input is unchanged.
+        """
+
         policy_obs = select_obs(actor_observations, "policy")
         critic_obs = select_obs(critic_observations, "critic")
 
-        path_blocked_target, dynamic_risk_target = self._aux_targets_from_critic_obs(
+        path_blocked_now_target, future_danger_target = self._aux_targets_from_critic_obs(
             critic_obs
         )
 
-        path_blocked_logits, dynamic_risk_logits = self.actor.auxiliary_logits(policy_obs)
+        path_blocked_logits, future_danger_logits = self.actor.auxiliary_logits(policy_obs)
 
         blocked_loss = self._balanced_bce_with_logits(
             path_blocked_logits,
-            path_blocked_target,
+            path_blocked_now_target,
         )
 
-        risk_loss = self._balanced_bce_with_logits(
-            dynamic_risk_logits,
-            dynamic_risk_target,
+        future_danger_loss = self._balanced_bce_with_logits(
+            future_danger_logits,
+            future_danger_target,
         )
 
-        aux_loss = blocked_loss + 0.5 * risk_loss
+        aux_loss = blocked_loss + 0.5 * future_danger_loss
 
         self.aux_call_count += 1
+
         if self.aux_call_count % 500 == 0:
             with torch.no_grad():
                 print(
-                    "[AUX]",
+                    "[AUX FUTURE]",
                     "calls=", self.aux_call_count,
                     "loss=", float(aux_loss.detach().cpu()),
                     "blocked_pred=", float(torch.sigmoid(path_blocked_logits).mean().detach().cpu()),
-                    "blocked_target=", float(path_blocked_target.mean().detach().cpu()),
-                    "risk_pred=", float(torch.sigmoid(dynamic_risk_logits).mean().detach().cpu()),
-                    "risk_target=", float(dynamic_risk_target.mean().detach().cpu()),
+                    "blocked_target=", float(path_blocked_now_target.mean().detach().cpu()),
+                    "future_pred=", float(torch.sigmoid(future_danger_logits).mean().detach().cpu()),
+                    "future_target=", float(future_danger_target.mean().detach().cpu()),
                     flush=True,
                 )
 
         info = {
             "aux_loss": float(aux_loss.detach().cpu()),
             "aux_blocked_loss": float(blocked_loss.detach().cpu()),
-            "aux_risk_loss": float(risk_loss.detach().cpu()),
-            "aux_blocked_target": float(path_blocked_target.mean().detach().cpu()),
-            "aux_risk_target": float(dynamic_risk_target.mean().detach().cpu()),
+            "aux_future_danger_loss": float(future_danger_loss.detach().cpu()),
+            "aux_blocked_target": float(path_blocked_now_target.mean().detach().cpu()),
+            "aux_future_danger_target": float(future_danger_target.mean().detach().cpu()),
         }
 
         return aux_loss, info
@@ -533,7 +556,7 @@ class ActorCriticScanTransformer(nn.Module):
 
     def evaluate(self, critic_observations, **kwargs) -> torch.Tensor:
         critic_obs = select_obs(critic_observations, "critic")
-        return self.critic(critic_obs)
+        return self.critic(critic_obs[:, : self.value_critic_input_dim])
 
     def get_actions_log_prob(self, actions: torch.Tensor) -> torch.Tensor:
         return self.distribution.log_prob(actions).sum(dim=-1)

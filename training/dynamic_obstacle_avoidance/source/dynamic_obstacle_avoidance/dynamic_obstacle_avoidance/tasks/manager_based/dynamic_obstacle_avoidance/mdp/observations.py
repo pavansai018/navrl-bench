@@ -642,3 +642,78 @@ def map_collision_direction_flags(
         "rear": rear_hit,
         "center": center_hit,
     }
+
+def future_path_blocked_1s(
+    env,
+    lookahead_points: int = 32,
+    path_radius: float = 0.35,
+    horizon_s: float = 1.0,
+) -> torch.Tensor:
+    """
+    Critic-only auxiliary target.
+
+    Output shape: [num_envs, 1]
+
+    1 = future local path corridor blocked after horizon_s
+    0 = future local path corridor clear
+
+    Actor does NOT receive this.
+    It is only used as aux supervision.
+    """
+
+    if not hasattr(env, "dyn_obs_xy") or not hasattr(env, "navrl_global_path_xy"):
+        return torch.zeros(env.num_envs, 1, device=env.device)
+
+    robot = env.scene["robot"]
+    robot_xy = robot.data.root_pos_w[:, :2] - env.scene.env_origins[:, :2]
+
+    path = env.navrl_global_path_xy
+    valid_count = env.navrl_path_valid_count
+
+    env_ids = torch.arange(env.num_envs, device=env.device)
+
+    nearest_idx = torch.argmin(
+        torch.norm(path - robot_xy[:, None, :], dim=-1),
+        dim=-1,
+    )
+
+    t = float(horizon_s)
+
+    # Linear prediction
+    obs_xy_t = env.dyn_obs_xy + env.dyn_obs_vel_xy * t
+
+    # Nonlinear prediction for scenario 4
+    if hasattr(env, "dyn_obs_phase"):
+        nonlinear_mask = env.dyn_obs_active & (env.dyn_obs_scenario == 4)
+
+        if torch.any(nonlinear_mask):
+            phase_now = env.dyn_obs_phase
+            phase_t = env.dyn_obs_phase + env.dyn_obs_omega * t
+
+            delta_wobble = (
+                torch.sin(phase_t) - torch.sin(phase_now)
+            ) * env.dyn_obs_amp
+
+            obs_xy_t = obs_xy_t + (
+                env.dyn_obs_normal
+                * delta_wobble.unsqueeze(-1)
+                * nonlinear_mask.unsqueeze(-1).float()
+            )
+
+    blocked = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+    for k in range(lookahead_points):
+        idx = torch.clamp(nearest_idx + k, min=0)
+        idx = torch.minimum(idx, valid_count - 1)
+
+        p = path[env_ids, idx]
+
+        d = torch.norm(obs_xy_t - p[:, None, :], dim=-1)
+
+        hit = env.dyn_obs_active & (
+            d < (env.dyn_obs_radius + path_radius)
+        )
+
+        blocked = blocked | hit.any(dim=-1)
+
+    return blocked.float().unsqueeze(-1)

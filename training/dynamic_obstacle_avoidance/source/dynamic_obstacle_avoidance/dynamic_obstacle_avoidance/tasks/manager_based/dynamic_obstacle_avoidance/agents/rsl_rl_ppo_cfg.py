@@ -13,7 +13,7 @@ from isaaclab_rl.rsl_rl import (
 @configclass
 class RslRlPpoAuxAlgorithmCfg(RslRlPpoAlgorithmCfg):
     class_name: str = "ppo_mod.PPO"
-    aux_loss_coef: float = 0.05
+    aux_loss_coef: float = 0.01
 
 
 @configclass
@@ -48,5 +48,5 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         max_grad_norm=1.0,
 
         # New auxiliary transformer loss coefficient
-        aux_loss_coef=0.05,
+        aux_loss_coef=0.01,
     )

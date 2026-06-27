@@ -80,6 +80,7 @@ OBSERVATIONS: dict = {
         'map_collision': {},
         'dynamic_collision': {},
         'scan_history': {'params': {'history_len': 8, 'num_rays': 144, 'max_range': 10.0, 'step_size': 0.10,}},
+        'future_path_blocked_1s': {'params': {'lookahead_points': 32, 'path_radius': 0.35, 'horizon_s': 1.0,}},
 
     },
 }
@@ -118,7 +119,7 @@ REWARDS: dict = {
     'dynamic_yield_no_side_space': {'weight': 8.0, 'lookahead_m': 2.0, 'corridor_half_width': 0.55, 'min_side_clearance': 0.45,},
     'dynamic_forward_blocked': {'weight': -12.0, 'lookahead_m': 2.0, 'corridor_half_width': 0.55,},
     'dynamic_bad_lateral': {'weight': -8.0, 'lookahead_m': 2.0, 'corridor_half_width': 0.55, 'min_side_clearance': 0.45,},
-    'timeout_failure': {'weight': -80.0},
+    'timeout_failure': {'weight': -200.0},
     'gated_detour': {'weight': 4.0, 'params': {'danger_clearance': 0.55, 'max_cte': 1.20}},
 }
 

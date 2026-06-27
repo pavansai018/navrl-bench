@@ -214,6 +214,11 @@ class ObservationsCfg:
         map_collision = ObsTerm(func=custom_observations.map_collision_observation)
         dynamic_collision = ObsTerm(func=custom_observations.dynamic_collision_observation)
 
+        future_path_blocked_1s = ObsTerm(
+            func=custom_observations.future_path_blocked_1s,
+            params=config.OBSERVATIONS['critic']['future_path_blocked_1s']['params'],
+        )
+
         def __post_init__(self) -> None:
             self.enable_corruption = False
             self.concatenate_terms = True
@@ -442,15 +447,15 @@ class RewardsCfg:
         weight=config.REWARDS['timeout_failure']['weight'],
     )
 
-    gated_detour = RewTerm(
-        func=custom_rewards.gated_detour_reward,
-        weight=config.REWARDS['gated_detour']['weight'],
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "danger_clearance": config.REWARDS['gated_detour']['params']['danger_clearance'],
-            "max_cte": config.REWARDS['gated_detour']['params']['max_cte'],
-        },
-    )
+    # gated_detour = RewTerm(
+    #     func=custom_rewards.gated_detour_reward,
+    #     weight=config.REWARDS['gated_detour']['weight'],
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "danger_clearance": config.REWARDS['gated_detour']['params']['danger_clearance'],
+    #         "max_cte": config.REWARDS['gated_detour']['params']['max_cte'],
+    #     },
+    # )
 
     # lateral_bypass = RewTerm(
     #     func=custom_rewards.lateral_bypass_reward,

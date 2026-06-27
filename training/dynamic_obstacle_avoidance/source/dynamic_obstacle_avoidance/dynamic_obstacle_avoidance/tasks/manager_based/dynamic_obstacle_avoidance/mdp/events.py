@@ -303,6 +303,52 @@ def _ensure_dynamic_obstacle_buffers(env):
     if not hasattr(env, "navrl_curriculum_level"):
         env.navrl_curriculum_level = torch.zeros(env.num_envs, dtype=torch.long, device=device)
 
+def _select_evenly_from_list(items, k: int):
+    """Pick k items spread across the full curriculum list, not only first k."""
+    items = list(items)
+
+    if k <= 0 or len(items) == 0:
+        return []
+
+    if len(items) <= k:
+        return items
+
+    if k == 1:
+        return [items[-1]]
+
+    idxs = [
+        int(round(i * (len(items) - 1) / float(k - 1)))
+        for i in range(k)
+    ]
+
+    return [items[i] for i in idxs]
+
+
+def _sample_spread_path_index(
+    env,
+    start_idx: int,
+    end_idx: int,
+    slot_id: int,
+    num_slots: int,
+) -> int:
+    """
+    Divide the path range into num_slots bins.
+    Each obstacle samples inside its own bin.
+    This guarantees coverage across the full path.
+    """
+
+    if num_slots <= 1:
+        return int(torch.randint(start_idx, end_idx, (1,), device=env.device).item())
+
+    span = max(1, end_idx - start_idx)
+
+    bin_start = start_idx + int(span * slot_id / num_slots)
+    bin_end = start_idx + int(span * (slot_id + 1) / num_slots)
+
+    bin_end = max(bin_start + 1, bin_end)
+    bin_end = min(bin_end, end_idx)
+
+    return int(torch.randint(bin_start, bin_end, (1,), device=env.device).item())
 
 def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneEntityCfg, max_path_points: int = 600):
     """Create tensor-based dynamic obstacle scenarios near the future path.
@@ -371,15 +417,44 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
         if vc < 12 or obstacle_level <= 0:
             continue
 
-        modes = config.obstacle_stages[:obstacle_level]
-        modes = modes[:num_obs]
+        all_modes = list(config.obstacle_stages[:obstacle_level])
 
+        use_real_room = "real_room_dynamic_clutter" in all_modes
+
+        normal_modes = [
+            m for m in all_modes
+            if m != "real_room_dynamic_clutter"
+        ]
+
+        # Reserve slots for whole-path real-room clutter/movers.
+        # With max_dynamic_obstacles=10:
+        #   6 normal curriculum obstacles + 4 real-room obstacles
+        # With max_dynamic_obstacles=20:
+        #   normal stages + 5 real-room obstacles
+        if use_real_room:
+            reserved_real_room_slots = min(4, num_obs)
+        else:
+            reserved_real_room_slots = 0
+
+        num_normal_slots = max(0, num_obs - reserved_real_room_slots)
+
+        # Important:
+        # Do NOT take first num_normal_slots modes.
+        # Select modes spread across the full curriculum list.
+        modes = _select_evenly_from_list(normal_modes, num_normal_slots)
+
+        # Spread obstacles over the full path, not only the first 35%.
         start_idx = max(5, int(0.10 * vc))
-        # end_idx = max(start_idx + 1, min(vc - 2, int(0.65 * vc)))
-        end_idx = max(start_idx + 1, min(vc - 2, int(0.35 * vc)))
+        end_idx = max(start_idx + 1, min(vc - 2, int(0.90 * vc)))
 
         for j, mode in enumerate(modes):
-            idx = int(torch.randint(start_idx, end_idx, (1,), device=env.device).item())
+            idx = _sample_spread_path_index(
+                env=env,
+                start_idx=start_idx,
+                end_idx=end_idx,
+                slot_id=j,
+                num_slots=max(1, len(modes)),
+            )
 
             p0 = path[env_id, idx]
             p1 = path[env_id, min(idx + 4, vc - 1)]
@@ -514,9 +589,10 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
             env.dyn_obs_radius[env_id, j] = radius
             env.dyn_obs_active[env_id, j] = True
             env.dyn_obs_scenario[env_id, j] = scenario
-            
-        if "real_room_dynamic_clutter" in modes:
 
+        # Spawn whole-path static clutter + nonlinear movers once.
+        # This uses remaining free slots.
+        if use_real_room:
             _spawn_real_room_dynamic_clutter(
                 env=env,
                 env_id=env_id,

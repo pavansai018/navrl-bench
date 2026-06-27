@@ -92,9 +92,9 @@ def nav2_heading_alignment_reward(env, asset_cfg: SceneEntityCfg, lookahead_inde
     err = _wrap_to_pi(path_yaw - robot_yaw)
     heading_reward = torch.cos(err)
     _, _, path_alpha, _ = _goal_blend(env, asset_cfg, start=1.5, end=0.30)
-    if hasattr(env, "navrl_path_blocked"):
-        path_clear = 1.0 - env.navrl_path_blocked.float()
-        return heading_reward * path_clear * path_alpha
+    # if hasattr(env, "navrl_path_blocked"):
+    #     path_clear = 1.0 - env.navrl_path_blocked.float()
+    #     return heading_reward * path_clear * path_alpha
 
     return heading_reward * path_alpha
 
@@ -276,8 +276,8 @@ def path_velocity_reward(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     # return torch.clamp(v / max_v, 0.0, 1.0)
     max_v = float(getattr(env.cfg.actions.base_velocity, "max_vx", 0.75))
     result = torch.clamp(v / max_v, 0.0, 1.0)
-    if hasattr(env, "navrl_path_blocked"):
-        return result * (1.0 - env.navrl_path_blocked.float())
+    # if hasattr(env, "navrl_path_blocked"):
+    #     return result * (1.0 - env.navrl_path_blocked.float())
     return result
 
 
@@ -355,8 +355,8 @@ def static_velocity_clearance_penalty(
 
     penalty = (safe_distance - move_dir_clearance) / safe_distance
     result = torch.clamp(penalty, 0.0, 1.0)
-    if hasattr(env, "navrl_path_blocked"):
-        return result * (1.0 - env.navrl_path_blocked.float())
+    # if hasattr(env, "navrl_path_blocked"):
+    #     return result * (1.0 - env.navrl_path_blocked.float())
     return result
 
 def start_speed_penalty(env, asset_cfg: SceneEntityCfg, warmup_s: float = 2.0):

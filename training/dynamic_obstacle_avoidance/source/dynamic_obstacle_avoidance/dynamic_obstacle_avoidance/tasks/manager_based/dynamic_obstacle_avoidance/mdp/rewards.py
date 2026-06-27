@@ -745,3 +745,47 @@ def dynamic_bad_lateral_penalty(
 
 def timeout_penalty(env) -> torch.Tensor:
     return (env.episode_length_buf >= env.max_episode_length - 1).float()
+
+def gated_detour_reward(
+    env,
+    asset_cfg: SceneEntityCfg,
+    danger_clearance: float = 0.55,
+    max_cte: float = 1.20,
+) -> torch.Tensor:
+    """
+    Reward lateral/escape motion only when an active obstacle is actually close.
+    This is not raw abs(vy). It rewards moving away from the nearest obstacle
+    during danger, while staying within a bounded detour corridor.
+    """
+    robot = env.scene[asset_cfg.name]
+
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    robot_vel = robot.data.root_lin_vel_w[:, :2]
+
+    # Nearest active obstacle
+    rel = robot_xy[:, None, :] - env.dyn_obs_xy
+    dist = torch.norm(rel, dim=-1).clamp_min(1e-6)
+
+    inflated_dist = dist - env.dyn_obs_radius
+    inactive_big = torch.ones_like(inflated_dist) * 1e6
+    inflated_dist = torch.where(env.dyn_obs_active, inflated_dist, inactive_big)
+
+    nearest_clearance, nearest_id = torch.min(inflated_dist, dim=-1)
+
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    nearest_rel = rel[env_ids, nearest_id]
+    away_dir = nearest_rel / torch.norm(nearest_rel, dim=-1, keepdim=True).clamp_min(1e-6)
+
+    away_speed = torch.sum(robot_vel * away_dir, dim=-1)
+
+    # Cross-track limit: allow detour, but not unlimited escape.
+    path = env.navrl_global_path_xy
+    nearest_path_idx = torch.argmin(torch.norm(path - robot_xy[:, None, :], dim=-1), dim=-1)
+    nearest_path_xy = path[env_ids, nearest_path_idx]
+    cte = torch.norm(nearest_path_xy - robot_xy, dim=-1)
+
+    danger = (nearest_clearance < danger_clearance).float()
+    bounded_detour = (cte < max_cte).float()
+
+    # Only reward moving away from a nearby obstacle.
+    return danger * bounded_detour * torch.clamp(away_speed, min=0.0)

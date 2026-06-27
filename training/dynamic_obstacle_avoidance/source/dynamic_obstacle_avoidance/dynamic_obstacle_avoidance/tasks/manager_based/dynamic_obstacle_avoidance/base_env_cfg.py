@@ -442,6 +442,16 @@ class RewardsCfg:
         weight=config.REWARDS['timeout_failure']['weight'],
     )
 
+    gated_detour = RewTerm(
+        func=custom_rewards.gated_detour_reward,
+        weight=config.REWARDS['gated_detour']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "danger_clearance": config.REWARDS['gated_detour']['params']['danger_clearance'],
+            "max_cte": config.REWARDS['gated_detour']['params']['max_cte'],
+        },
+    )
+
     # lateral_bypass = RewTerm(
     #     func=custom_rewards.lateral_bypass_reward,
     #     weight=config.REWARDS['lateral_bypass']['weight'],

@@ -509,20 +509,21 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
                 vel = -side * speed * normal
                 scenario = 2
 
-            if "real_room_dynamic_clutter" in modes:
-                _spawn_real_room_dynamic_clutter(
-                    env=env,
-                    env_id=env_id,
-                    path_xy=path[env_id],
-                    valid_count=vc,
-                    num_obs=num_obs,
-                )
-
             env.dyn_obs_xy[env_id, j] = pos
             env.dyn_obs_vel_xy[env_id, j] = vel
             env.dyn_obs_radius[env_id, j] = radius
             env.dyn_obs_active[env_id, j] = True
             env.dyn_obs_scenario[env_id, j] = scenario
+            
+        if "real_room_dynamic_clutter" in modes:
+
+            _spawn_real_room_dynamic_clutter(
+                env=env,
+                env_id=env_id,
+                path_xy=path[env_id],
+                valid_count=vc,
+                num_obs=num_obs,
+            )
 
 def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
     """Move tensor obstacles and respawn inactive/out-of-range ones ahead of the robot."""

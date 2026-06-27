@@ -29,6 +29,7 @@ obstacle_stages: list = [
   'reverse_same_lane_slow',
   'center_stationary_large',
   'two_crossing_combo',
+  'real_room_dynamic_clutter',
 ]
 
 nav2_path_dataset_dir: str = "/home/pavan/Downloads/SUTD/DesignProject/navrl-bench/m3_ros2_ws/src/nav_rl_bridge/rl_path_dataset/aws_warehouse"

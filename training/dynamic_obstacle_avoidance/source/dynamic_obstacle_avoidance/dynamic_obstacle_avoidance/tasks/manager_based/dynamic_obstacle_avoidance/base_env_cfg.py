@@ -646,10 +646,27 @@ class DynamicObstacleAvoidanceEnvCfg(ManagerBasedRLEnvCfg):
     mppi_teacher: dict = config.MPPI_TEACHER
 
     # Tensor dynamic obstacle/curriculum configuration.
-    max_dynamic_obstacles: int = 20
+    max_dynamic_obstacles: int = 10
     dynamic_obstacle_radius_min: float = 0.18
     dynamic_obstacle_radius_max: float = 0.32
     dynamic_obstacle_deactivate_range: float = 6.0
+
+    # total active obstacles = max_dynamic_obstacles
+    # Move along the path direction.
+    # These are same-lane / reverse-same-lane blockers.
+    num_vertical_path_obstacles: int = 3
+
+    # Move across the path direction.
+    # These are crossing blockers.
+    num_horizontal_path_obstacles: int = 3
+
+    # Remaining slots are side obstacles.
+    # Out of side obstacles, how many should move.
+    num_side_dynamic_obstacles: int = 2
+
+    # Side obstacles are placed outside active path corridor.
+    side_obstacle_offset_min: float = 0.85
+    side_obstacle_offset_max: float = 1.45
 
     # Small robustness noise only; dynamic obstacles create the actual avoidance problem.
     reset_lateral_noise_m: float = 0.0 #0.10

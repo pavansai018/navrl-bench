@@ -353,6 +353,318 @@ def _sample_spread_path_index(
 
     return int(torch.randint(bin_start, bin_end, (1,), device=env.device).item())
 
+def _get_path_frame(path_xy: torch.Tensor, idx: int, valid_count: int):
+    p0 = path_xy[idx]
+    p1 = path_xy[min(idx + 5, valid_count - 1)]
+
+    tangent = p1 - p0
+    tangent = tangent / torch.norm(tangent).clamp_min(1.0e-6)
+
+    normal = torch.stack([-tangent[1], tangent[0]])
+
+    return p0, tangent, normal
+
+
+def _spawn_vertical_path_obstacle(
+    env,
+    env_id: int,
+    slot: int,
+    p0: torch.Tensor,
+    tangent: torch.Tensor,
+    normal: torch.Tensor,
+):
+    """
+    Vertical = moves along the path direction.
+    Same-lane or reverse-same-lane obstacle.
+    This is a true path blocker.
+    """
+
+    side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
+    direction = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
+
+    radius = torch.empty((), device=env.device).uniform_(0.12, 0.20)
+
+    # Keep it close to path center, so it is a real path-corridor obstacle.
+    lateral_jitter = side * torch.empty((), device=env.device).uniform_(0.00, 0.18)
+    along_jitter = torch.empty((), device=env.device).uniform_(-0.20, 0.45)
+
+    pos = p0 + along_jitter * tangent + lateral_jitter * normal
+
+    speed = torch.empty((), device=env.device).uniform_(0.06, 0.20)
+    vel = direction * speed * tangent
+
+    env.dyn_obs_xy[env_id, slot] = pos
+    env.dyn_obs_vel_xy[env_id, slot] = vel
+    env.dyn_obs_radius[env_id, slot] = radius
+    env.dyn_obs_active[env_id, slot] = True
+    env.dyn_obs_scenario[env_id, slot] = 3
+
+
+def _spawn_horizontal_path_obstacle(
+    env,
+    env_id: int,
+    slot: int,
+    p0: torch.Tensor,
+    tangent: torch.Tensor,
+    normal: torch.Tensor,
+):
+    """
+    Horizontal = moves across the path direction.
+    Crossing obstacle.
+    This is a true path blocker.
+    """
+
+    side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
+
+    radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
+
+    # Start outside corridor and cross through it.
+    offset = side * torch.empty((), device=env.device).uniform_(0.75, 1.35)
+    along_jitter = torch.empty((), device=env.device).uniform_(-0.25, 0.35)
+
+    pos = p0 + offset * normal + along_jitter * tangent
+
+    speed = torch.empty((), device=env.device).uniform_(0.10, 0.30)
+    vel = -side * speed * normal
+
+    env.dyn_obs_xy[env_id, slot] = pos
+    env.dyn_obs_vel_xy[env_id, slot] = vel
+    env.dyn_obs_radius[env_id, slot] = radius
+    env.dyn_obs_active[env_id, slot] = True
+    env.dyn_obs_scenario[env_id, slot] = 2
+
+
+def _spawn_side_obstacle(
+    env,
+    env_id: int,
+    slot: int,
+    p0: torch.Tensor,
+    tangent: torch.Tensor,
+    normal: torch.Tensor,
+    moving: bool,
+):
+    """
+    Side obstacle = visible in scan, spread along path,
+    but placed outside the main path corridor.
+
+    moving=False -> static side clutter
+    moving=True  -> side dynamic obstacle
+    """
+
+    side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
+
+    offset_min = float(getattr(env.cfg, "side_obstacle_offset_min", 0.85))
+    offset_max = float(getattr(env.cfg, "side_obstacle_offset_max", 1.45))
+
+    lateral_offset = side * torch.empty((), device=env.device).uniform_(offset_min, offset_max)
+    along_jitter = torch.empty((), device=env.device).uniform_(-0.35, 0.35)
+
+    pos = p0 + lateral_offset * normal + along_jitter * tangent
+
+    radius = torch.empty((), device=env.device).uniform_(0.10, 0.22)
+
+    env.dyn_obs_xy[env_id, slot] = pos
+    env.dyn_obs_radius[env_id, slot] = radius
+    env.dyn_obs_active[env_id, slot] = True
+
+    if moving:
+        # Side dynamic obstacle moves mostly along the path,
+        # with small nonlinear side wobble.
+        direction = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
+        speed = torch.empty((), device=env.device).uniform_(0.05, 0.16)
+
+        env.dyn_obs_vel_xy[env_id, slot] = direction * speed * tangent
+        env.dyn_obs_scenario[env_id, slot] = 4
+
+        env.dyn_obs_phase[env_id, slot] = torch.empty(
+            (),
+            device=env.device,
+        ).uniform_(0.0, 2.0 * math.pi)
+
+        env.dyn_obs_omega[env_id, slot] = torch.empty(
+            (),
+            device=env.device,
+        ).uniform_(0.6, 1.2)
+
+        # Small wobble only, so side obstacle does not become a main blocker.
+        env.dyn_obs_amp[env_id, slot] = torch.empty(
+            (),
+            device=env.device,
+        ).uniform_(0.04, 0.12)
+
+        env.dyn_obs_normal[env_id, slot] = normal
+
+    else:
+        env.dyn_obs_vel_xy[env_id, slot] = 0.0
+        env.dyn_obs_scenario[env_id, slot] = 5
+
+
+def _spawn_controlled_level16_obstacles(
+    env,
+    env_id: int,
+    path_xy: torch.Tensor,
+    valid_count: int,
+):
+    """
+    Controlled obstacle layout.
+
+    total slots:
+        env.cfg.max_dynamic_obstacles
+
+    path blockers:
+        env.cfg.num_vertical_path_obstacles
+        env.cfg.num_horizontal_path_obstacles
+
+    side obstacles:
+        remaining slots
+
+    side dynamic:
+        env.cfg.num_side_dynamic_obstacles
+    """
+
+    num_obs = env.dyn_obs_xy.shape[1]
+
+    n_vertical = int(getattr(env.cfg, "num_vertical_path_obstacles", 3))
+    n_horizontal = int(getattr(env.cfg, "num_horizontal_path_obstacles", 3))
+    n_side_dynamic = int(getattr(env.cfg, "num_side_dynamic_obstacles", 2))
+
+    n_vertical = max(0, n_vertical)
+    n_horizontal = max(0, n_horizontal)
+    n_side_dynamic = max(0, n_side_dynamic)
+
+    # Do not exceed total slots.
+    n_path = min(num_obs, n_vertical + n_horizontal)
+
+    if n_vertical + n_horizontal > num_obs:
+        # Preserve ratio approximately if user over-requests.
+        total_requested = max(1, n_vertical + n_horizontal)
+        n_vertical = int(round(num_obs * n_vertical / total_requested))
+        n_horizontal = num_obs - n_vertical
+        n_path = num_obs
+
+    n_side = max(0, num_obs - n_path)
+    n_side_dynamic = min(n_side_dynamic, n_side)
+    n_side_static = n_side - n_side_dynamic
+
+    start_idx = max(5, int(0.10 * valid_count))
+    end_idx = max(start_idx + 1, min(valid_count - 2, int(0.90 * valid_count)))
+
+    slot = 0
+
+    # -------------------------
+    # Vertical path blockers
+    # -------------------------
+    for k in range(n_vertical):
+        if slot >= num_obs:
+            return
+
+        idx = _sample_spread_path_index(
+            env=env,
+            start_idx=start_idx,
+            end_idx=end_idx,
+            slot_id=slot,
+            num_slots=max(1, num_obs),
+        )
+
+        p0, tangent, normal = _get_path_frame(path_xy, idx, valid_count)
+
+        _spawn_vertical_path_obstacle(
+            env=env,
+            env_id=env_id,
+            slot=slot,
+            p0=p0,
+            tangent=tangent,
+            normal=normal,
+        )
+
+        slot += 1
+
+    # -------------------------
+    # Horizontal path blockers
+    # -------------------------
+    for k in range(n_horizontal):
+        if slot >= num_obs:
+            return
+
+        idx = _sample_spread_path_index(
+            env=env,
+            start_idx=start_idx,
+            end_idx=end_idx,
+            slot_id=slot,
+            num_slots=max(1, num_obs),
+        )
+
+        p0, tangent, normal = _get_path_frame(path_xy, idx, valid_count)
+
+        _spawn_horizontal_path_obstacle(
+            env=env,
+            env_id=env_id,
+            slot=slot,
+            p0=p0,
+            tangent=tangent,
+            normal=normal,
+        )
+
+        slot += 1
+
+    # -------------------------
+    # Side dynamic obstacles
+    # -------------------------
+    for k in range(n_side_dynamic):
+        if slot >= num_obs:
+            return
+
+        idx = _sample_spread_path_index(
+            env=env,
+            start_idx=start_idx,
+            end_idx=end_idx,
+            slot_id=slot,
+            num_slots=max(1, num_obs),
+        )
+
+        p0, tangent, normal = _get_path_frame(path_xy, idx, valid_count)
+
+        _spawn_side_obstacle(
+            env=env,
+            env_id=env_id,
+            slot=slot,
+            p0=p0,
+            tangent=tangent,
+            normal=normal,
+            moving=True,
+        )
+
+        slot += 1
+
+    # -------------------------
+    # Side static obstacles
+    # -------------------------
+    for k in range(n_side_static):
+        if slot >= num_obs:
+            return
+
+        idx = _sample_spread_path_index(
+            env=env,
+            start_idx=start_idx,
+            end_idx=end_idx,
+            slot_id=slot,
+            num_slots=max(1, num_obs),
+        )
+
+        p0, tangent, normal = _get_path_frame(path_xy, idx, valid_count)
+
+        _spawn_side_obstacle(
+            env=env,
+            env_id=env_id,
+            slot=slot,
+            p0=p0,
+            tangent=tangent,
+            normal=normal,
+            moving=False,
+        )
+
+        slot += 1
+
 def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneEntityCfg, max_path_points: int = 600):
     """Create tensor-based dynamic obstacle scenarios near the future path.
 
@@ -420,190 +732,201 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
         vc = int(valid_count[env_id].item())
         if vc < 12 or obstacle_level <= 0:
             continue
+        
+        # Level 16 controlled obstacle layout:
+        # total = max_dynamic_obstacles
+        # vertical path blockers = num_vertical_path_obstacles
+        # horizontal path blockers = num_horizontal_path_obstacles
+        # remaining = side obstacles
+        _spawn_controlled_level16_obstacles(
+            env=env,
+            env_id=env_id,
+            path_xy=path[env_id],
+            valid_count=vc,
+        )
+        # all_modes = list(config.obstacle_stages[:obstacle_level])
 
-        all_modes = list(config.obstacle_stages[:obstacle_level])
+        # use_real_room = "real_room_dynamic_clutter" in all_modes
 
-        use_real_room = "real_room_dynamic_clutter" in all_modes
+        # normal_modes = [
+        #     m for m in all_modes
+        #     if m != "real_room_dynamic_clutter"
+        # ]
 
-        normal_modes = [
-            m for m in all_modes
-            if m != "real_room_dynamic_clutter"
-        ]
+        # # Reserve slots for whole-path real-room clutter/movers.
+        # # With max_dynamic_obstacles=10:
+        # #   6 normal curriculum obstacles + 4 real-room obstacles
+        # # With max_dynamic_obstacles=20:
+        # #   normal stages + 5 real-room obstacles
+        # if use_real_room:
+        #     reserved_real_room_slots = min(4, num_obs)
+        # else:
+        #     reserved_real_room_slots = 0
 
-        # Reserve slots for whole-path real-room clutter/movers.
-        # With max_dynamic_obstacles=10:
-        #   6 normal curriculum obstacles + 4 real-room obstacles
-        # With max_dynamic_obstacles=20:
-        #   normal stages + 5 real-room obstacles
-        if use_real_room:
-            reserved_real_room_slots = min(4, num_obs)
-        else:
-            reserved_real_room_slots = 0
+        # num_normal_slots = max(0, num_obs - reserved_real_room_slots)
 
-        num_normal_slots = max(0, num_obs - reserved_real_room_slots)
+        # # Important:
+        # # Do NOT take first num_normal_slots modes.
+        # # Select modes spread across the full curriculum list.
+        # modes = _select_evenly_from_list(normal_modes, num_normal_slots)
 
-        # Important:
-        # Do NOT take first num_normal_slots modes.
-        # Select modes spread across the full curriculum list.
-        modes = _select_evenly_from_list(normal_modes, num_normal_slots)
+        # # Spread obstacles over the full path, not only the first 35%.
+        # start_idx = max(5, int(0.10 * vc))
+        # end_idx = max(start_idx + 1, min(vc - 2, int(0.90 * vc)))
 
-        # Spread obstacles over the full path, not only the first 35%.
-        start_idx = max(5, int(0.10 * vc))
-        end_idx = max(start_idx + 1, min(vc - 2, int(0.90 * vc)))
+        # for j, mode in enumerate(modes):
+        #     idx = _sample_spread_path_index(
+        #         env=env,
+        #         start_idx=start_idx,
+        #         end_idx=end_idx,
+        #         slot_id=j,
+        #         num_slots=max(1, len(modes)),
+        #     )
 
-        for j, mode in enumerate(modes):
-            idx = _sample_spread_path_index(
-                env=env,
-                start_idx=start_idx,
-                end_idx=end_idx,
-                slot_id=j,
-                num_slots=max(1, len(modes)),
-            )
+        #     p0 = path[env_id, idx]
+        #     p1 = path[env_id, min(idx + 4, vc - 1)]
 
-            p0 = path[env_id, idx]
-            p1 = path[env_id, min(idx + 4, vc - 1)]
+        #     tangent = p1 - p0
+        #     tangent = tangent / torch.norm(tangent).clamp_min(1e-6)
 
-            tangent = p1 - p0
-            tangent = tangent / torch.norm(tangent).clamp_min(1e-6)
+        #     normal = torch.stack([-tangent[1], tangent[0]])
+        #     side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
 
-            normal = torch.stack([-tangent[1], tangent[0]])
-            side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
+        #     if mode == "side_stationary_tiny":
+        #         radius = torch.empty((), device=env.device).uniform_(0.08, 0.11)
+        #         offset = side * torch.empty((), device=env.device).uniform_(0.45, 0.60)
+        #         pos = p0 + offset * normal
+        #         vel = torch.zeros(2, device=env.device)
+        #         scenario = 1
 
-            if mode == "side_stationary_tiny":
-                radius = torch.empty((), device=env.device).uniform_(0.08, 0.11)
-                offset = side * torch.empty((), device=env.device).uniform_(0.45, 0.60)
-                pos = p0 + offset * normal
-                vel = torch.zeros(2, device=env.device)
-                scenario = 1
+        #     elif mode == "side_stationary_small":
+        #         radius = torch.empty((), device=env.device).uniform_(0.10, 0.14)
+        #         offset = side * torch.empty((), device=env.device).uniform_(0.35, 0.50)
+        #         pos = p0 + offset * normal
+        #         vel = torch.zeros(2, device=env.device)
+        #         scenario = 1
 
-            elif mode == "side_stationary_small":
-                radius = torch.empty((), device=env.device).uniform_(0.10, 0.14)
-                offset = side * torch.empty((), device=env.device).uniform_(0.35, 0.50)
-                pos = p0 + offset * normal
-                vel = torch.zeros(2, device=env.device)
-                scenario = 1
+        #     elif mode == "center_stationary_tiny":
+        #         radius = torch.empty((), device=env.device).uniform_(0.08, 0.11)
+        #         # pos = p0
+        #         offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
+        #         pos = p0 + offset * normal
+        #         vel = torch.zeros(2, device=env.device)
+        #         scenario = 1
 
-            elif mode == "center_stationary_tiny":
-                radius = torch.empty((), device=env.device).uniform_(0.08, 0.11)
-                # pos = p0
-                offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
-                pos = p0 + offset * normal
-                vel = torch.zeros(2, device=env.device)
-                scenario = 1
+        #     elif mode == "center_stationary_small":
+        #         radius = torch.empty((), device=env.device).uniform_(0.10, 0.14)
+        #         # pos = p0
+        #         offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
+        #         pos = p0 + offset * normal
+        #         vel = torch.zeros(2, device=env.device)
+        #         scenario = 1
 
-            elif mode == "center_stationary_small":
-                radius = torch.empty((), device=env.device).uniform_(0.10, 0.14)
-                # pos = p0
-                offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
-                pos = p0 + offset * normal
-                vel = torch.zeros(2, device=env.device)
-                scenario = 1
+        #     elif mode == "center_stationary_medium":
+        #         radius = torch.empty((), device=env.device).uniform_(0.14, 0.18)
+        #         # pos = p0
+        #         offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
+        #         pos = p0 + offset * normal
+        #         vel = torch.zeros(2, device=env.device)
+        #         scenario = 1
 
-            elif mode == "center_stationary_medium":
-                radius = torch.empty((), device=env.device).uniform_(0.14, 0.18)
-                # pos = p0
-                offset = side * torch.empty((), device=env.device).uniform_(0.05, 0.20)
-                pos = p0 + offset * normal
-                vel = torch.zeros(2, device=env.device)
-                scenario = 1
+        #     elif mode == "slow_crossing_far":
+        #         radius = torch.empty((), device=env.device).uniform_(0.10, 0.15)
+        #         offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.50)
+        #         speed = torch.empty((), device=env.device).uniform_(0.04, 0.10)
+        #         pos = p0 + offset * normal
+        #         vel = -side * speed * normal
+        #         scenario = 2
 
-            elif mode == "slow_crossing_far":
-                radius = torch.empty((), device=env.device).uniform_(0.10, 0.15)
-                offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.50)
-                speed = torch.empty((), device=env.device).uniform_(0.04, 0.10)
-                pos = p0 + offset * normal
-                vel = -side * speed * normal
-                scenario = 2
+        #     elif mode == "slow_crossing_near":
+        #         radius = torch.empty((), device=env.device).uniform_(0.10, 0.16)
+        #         offset = side * torch.empty((), device=env.device).uniform_(0.75, 1.10)
+        #         speed = torch.empty((), device=env.device).uniform_(0.06, 0.14)
+        #         pos = p0 + offset * normal
+        #         vel = -side * speed * normal
+        #         scenario = 2
 
-            elif mode == "slow_crossing_near":
-                radius = torch.empty((), device=env.device).uniform_(0.10, 0.16)
-                offset = side * torch.empty((), device=env.device).uniform_(0.75, 1.10)
-                speed = torch.empty((), device=env.device).uniform_(0.06, 0.14)
-                pos = p0 + offset * normal
-                vel = -side * speed * normal
-                scenario = 2
+        #     elif mode == "medium_crossing_far":
+        #         radius = torch.empty((), device=env.device).uniform_(0.12, 0.18)
+        #         offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.50)
+        #         speed = torch.empty((), device=env.device).uniform_(0.12, 0.22)
+        #         pos = p0 + offset * normal
+        #         vel = -side * speed * normal
+        #         scenario = 2
 
-            elif mode == "medium_crossing_far":
-                radius = torch.empty((), device=env.device).uniform_(0.12, 0.18)
-                offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.50)
-                speed = torch.empty((), device=env.device).uniform_(0.12, 0.22)
-                pos = p0 + offset * normal
-                vel = -side * speed * normal
-                scenario = 2
+        #     elif mode == "medium_crossing_near":
+        #         radius = torch.empty((), device=env.device).uniform_(0.12, 0.20)
+        #         offset = side * torch.empty((), device=env.device).uniform_(0.75, 1.10)
+        #         speed = torch.empty((), device=env.device).uniform_(0.16, 0.28)
+        #         pos = p0 + offset * normal
+        #         vel = -side * speed * normal
+        #         scenario = 2
 
-            elif mode == "medium_crossing_near":
-                radius = torch.empty((), device=env.device).uniform_(0.12, 0.20)
-                offset = side * torch.empty((), device=env.device).uniform_(0.75, 1.10)
-                speed = torch.empty((), device=env.device).uniform_(0.16, 0.28)
-                pos = p0 + offset * normal
-                vel = -side * speed * normal
-                scenario = 2
+        #     elif mode == "fast_crossing_far":
+        #         radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
+        #         offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.60)
+        #         speed = torch.empty((), device=env.device).uniform_(0.25, 0.40)
+        #         pos = p0 + offset * normal
+        #         vel = -side * speed * normal
+        #         scenario = 2
 
-            elif mode == "fast_crossing_far":
-                radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
-                offset = side * torch.empty((), device=env.device).uniform_(1.10, 1.60)
-                speed = torch.empty((), device=env.device).uniform_(0.25, 0.40)
-                pos = p0 + offset * normal
-                vel = -side * speed * normal
-                scenario = 2
+        #     elif mode == "same_lane_slow":
+        #         radius = torch.empty((), device=env.device).uniform_(0.10, 0.16)
+        #         ahead = torch.empty((), device=env.device).uniform_(0.30, 0.70)
+        #         speed = torch.empty((), device=env.device).uniform_(0.04, 0.10)
+        #         pos = p0 + ahead * tangent
+        #         vel = speed * tangent
+        #         scenario = 3
 
-            elif mode == "same_lane_slow":
-                radius = torch.empty((), device=env.device).uniform_(0.10, 0.16)
-                ahead = torch.empty((), device=env.device).uniform_(0.30, 0.70)
-                speed = torch.empty((), device=env.device).uniform_(0.04, 0.10)
-                pos = p0 + ahead * tangent
-                vel = speed * tangent
-                scenario = 3
+        #     elif mode == "same_lane_medium":
+        #         radius = torch.empty((), device=env.device).uniform_(0.12, 0.20)
+        #         ahead = torch.empty((), device=env.device).uniform_(0.30, 0.80)
+        #         speed = torch.empty((), device=env.device).uniform_(0.10, 0.20)
+        #         pos = p0 + ahead * tangent
+        #         vel = speed * tangent
+        #         scenario = 3
 
-            elif mode == "same_lane_medium":
-                radius = torch.empty((), device=env.device).uniform_(0.12, 0.20)
-                ahead = torch.empty((), device=env.device).uniform_(0.30, 0.80)
-                speed = torch.empty((), device=env.device).uniform_(0.10, 0.20)
-                pos = p0 + ahead * tangent
-                vel = speed * tangent
-                scenario = 3
+        #     elif mode == "reverse_same_lane_slow":
+        #         radius = torch.empty((), device=env.device).uniform_(0.10, 0.18)
+        #         ahead = torch.empty((), device=env.device).uniform_(0.50, 1.00)
+        #         speed = torch.empty((), device=env.device).uniform_(0.04, 0.12)
+        #         pos = p0 + ahead * tangent
+        #         vel = -speed * tangent
+        #         scenario = 3
 
-            elif mode == "reverse_same_lane_slow":
-                radius = torch.empty((), device=env.device).uniform_(0.10, 0.18)
-                ahead = torch.empty((), device=env.device).uniform_(0.50, 1.00)
-                speed = torch.empty((), device=env.device).uniform_(0.04, 0.12)
-                pos = p0 + ahead * tangent
-                vel = -speed * tangent
-                scenario = 3
+        #     elif mode == "center_stationary_large":
+        #         radius = torch.empty((), device=env.device).uniform_(0.18, 0.24)
+        #         pos = p0
+        #         vel = torch.zeros(2, device=env.device)
+        #         scenario = 1
 
-            elif mode == "center_stationary_large":
-                radius = torch.empty((), device=env.device).uniform_(0.18, 0.24)
-                pos = p0
-                vel = torch.zeros(2, device=env.device)
-                scenario = 1
+        #     elif mode == "real_room_dynamic_clutter":
+        #         continue
 
-            elif mode == "real_room_dynamic_clutter":
-                continue
+        #     else:  # two_crossing_combo
+        #         radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
+        #         offset = side * torch.empty((), device=env.device).uniform_(0.80, 1.30)
+        #         speed = torch.empty((), device=env.device).uniform_(0.12, 0.30)
+        #         pos = p0 + offset * normal
+        #         vel = -side * speed * normal
+        #         scenario = 2
 
-            else:  # two_crossing_combo
-                radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
-                offset = side * torch.empty((), device=env.device).uniform_(0.80, 1.30)
-                speed = torch.empty((), device=env.device).uniform_(0.12, 0.30)
-                pos = p0 + offset * normal
-                vel = -side * speed * normal
-                scenario = 2
+        #     env.dyn_obs_xy[env_id, j] = pos
+        #     env.dyn_obs_vel_xy[env_id, j] = vel
+        #     env.dyn_obs_radius[env_id, j] = radius
+        #     env.dyn_obs_active[env_id, j] = True
+        #     env.dyn_obs_scenario[env_id, j] = scenario
 
-            env.dyn_obs_xy[env_id, j] = pos
-            env.dyn_obs_vel_xy[env_id, j] = vel
-            env.dyn_obs_radius[env_id, j] = radius
-            env.dyn_obs_active[env_id, j] = True
-            env.dyn_obs_scenario[env_id, j] = scenario
-
-        # Spawn whole-path static clutter + nonlinear movers once.
-        # This uses remaining free slots.
-        if use_real_room:
-            _spawn_real_room_dynamic_clutter(
-                env=env,
-                env_id=env_id,
-                path_xy=path[env_id],
-                valid_count=vc,
-                num_obs=num_obs,
-            )
+        # # Spawn whole-path static clutter + nonlinear movers once.
+        # # This uses remaining free slots.
+        # if use_real_room:
+        #     _spawn_real_room_dynamic_clutter(
+        #         env=env,
+        #         env_id=env_id,
+        #         path_xy=path[env_id],
+        #         valid_count=vc,
+        #         num_obs=num_obs,
+        #     )
 
 def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
     """Move tensor obstacles and respawn inactive/out-of-range ones ahead of the robot."""

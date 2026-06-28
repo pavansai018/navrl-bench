@@ -302,6 +302,9 @@ def _ensure_dynamic_obstacle_buffers(env):
 
     if not hasattr(env, "navrl_curriculum_level"):
         env.navrl_curriculum_level = torch.zeros(env.num_envs, dtype=torch.long, device=device)
+    
+    if needs_resize("dyn_obs_eff_vel_xy", (env.num_envs, num_obs, 2)):
+        env.dyn_obs_eff_vel_xy = torch.zeros(env.num_envs, num_obs, 2, device=device)
 
 def _select_evenly_from_list(items, k: int):
     """Pick k items spread across the full curriculum list, not only first k."""
@@ -403,6 +406,7 @@ def reset_dynamic_obstacles_tensor(env, env_ids: torch.Tensor, asset_cfg: SceneE
     env.dyn_obs_omega[env_ids] = 0.0
     env.dyn_obs_amp[env_ids] = 0.0
     env.dyn_obs_normal[env_ids] = 0.0
+    env.dyn_obs_eff_vel_xy[env_ids] = 0.0
 
     path = env.navrl_global_path_xy
     valid_count = env.navrl_path_valid_count
@@ -609,7 +613,19 @@ def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
     if env_ids is None or len(env_ids) == 0:
         env_ids = torch.arange(env.num_envs, device=env.device)
 
+    if (
+        not hasattr(env, "dyn_obs_eff_vel_xy")
+        or env.dyn_obs_eff_vel_xy.shape != env.dyn_obs_xy.shape
+    ):
+        env.dyn_obs_eff_vel_xy = torch.zeros_like(env.dyn_obs_xy)
+
     dt = float(getattr(env, "step_dt", getattr(env, "physics_dt", 1.0 / 30.0)))
+    dt_safe = max(dt, 1.0e-6)
+    # Save position before movement.
+    # After linear + nonlinear movement, velocity = displacement / dt.
+    old_xy = env.dyn_obs_xy[env_ids].clone()
+
+    active = env.dyn_obs_active[env_ids].unsqueeze(-1).float()
     env.dyn_obs_xy[env_ids] += env.dyn_obs_vel_xy[env_ids] * dt * env.dyn_obs_active[env_ids].unsqueeze(-1).float()
 
     # Nonlinear motion for scenario 4:
@@ -635,6 +651,15 @@ def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
             * delta_wobble.unsqueeze(-1)
             * nonlinear_mask.unsqueeze(-1).float()
         )
+    
+    env.dyn_obs_eff_vel_xy[env_ids] = (
+        env.dyn_obs_xy[env_ids] - old_xy
+    ) / dt_safe
+
+    # Inactive obstacles should not produce TTC reward.
+    env.dyn_obs_eff_vel_xy[env_ids] *= (
+        env.dyn_obs_active[env_ids].unsqueeze(-1).float()
+    )
 
     # Deactivate obstacles far from robot; next reset creates new scenarios.
     robot = env.scene["robot"]
@@ -643,6 +668,10 @@ def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
     dist = torch.norm(rel, dim=-1)
     far = dist > float(getattr(env.cfg, "dynamic_obstacle_deactivate_range", 6.0))
     env.dyn_obs_active[env_ids] = env.dyn_obs_active[env_ids] & (~far)
+    # After deactivation, zero velocity again for inactive obstacles.
+    env.dyn_obs_eff_vel_xy[env_ids] *= (
+        env.dyn_obs_active[env_ids].unsqueeze(-1).float()
+    )
     if hasattr(env, "navrl_global_path_xy"):
         dynamic_path_blockage(
             env,

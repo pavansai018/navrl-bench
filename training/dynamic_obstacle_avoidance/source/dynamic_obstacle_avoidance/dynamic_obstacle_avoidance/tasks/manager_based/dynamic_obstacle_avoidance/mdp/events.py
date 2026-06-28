@@ -364,7 +364,6 @@ def _get_path_frame(path_xy: torch.Tensor, idx: int, valid_count: int):
 
     return p0, tangent, normal
 
-
 def _spawn_vertical_path_obstacle(
     env,
     env_id: int,
@@ -374,9 +373,8 @@ def _spawn_vertical_path_obstacle(
     normal: torch.Tensor,
 ):
     """
-    Vertical = moves along the path direction.
-    Same-lane or reverse-same-lane obstacle.
-    This is a true path blocker.
+    Vertical = primary motion along the path direction.
+    Nonlinear = sinusoidal side-to-side wobble across path normal.
     """
 
     side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
@@ -384,7 +382,6 @@ def _spawn_vertical_path_obstacle(
 
     radius = torch.empty((), device=env.device).uniform_(0.12, 0.20)
 
-    # Keep it close to path center, so it is a real path-corridor obstacle.
     lateral_jitter = side * torch.empty((), device=env.device).uniform_(0.00, 0.18)
     along_jitter = torch.empty((), device=env.device).uniform_(-0.20, 0.45)
 
@@ -399,6 +396,24 @@ def _spawn_vertical_path_obstacle(
     env.dyn_obs_active[env_id, slot] = True
     env.dyn_obs_scenario[env_id, slot] = 3
 
+    # Nonlinear side wobble.
+    env.dyn_obs_phase[env_id, slot] = torch.empty(
+        (),
+        device=env.device,
+    ).uniform_(0.0, 2.0 * math.pi)
+
+    env.dyn_obs_omega[env_id, slot] = torch.empty(
+        (),
+        device=env.device,
+    ).uniform_(0.7, 1.6)
+
+    env.dyn_obs_amp[env_id, slot] = torch.empty(
+        (),
+        device=env.device,
+    ).uniform_(0.10, 0.28)
+
+    # Along-path mover wobbles sideways.
+    env.dyn_obs_normal[env_id, slot] = normal
 
 def _spawn_horizontal_path_obstacle(
     env,
@@ -409,16 +424,14 @@ def _spawn_horizontal_path_obstacle(
     normal: torch.Tensor,
 ):
     """
-    Horizontal = moves across the path direction.
-    Crossing obstacle.
-    This is a true path blocker.
+    Horizontal = primary motion across the path direction.
+    Nonlinear = sinusoidal along-path wobble while crossing.
     """
 
     side = 1.0 if torch.rand((), device=env.device).item() > 0.5 else -1.0
 
     radius = torch.empty((), device=env.device).uniform_(0.12, 0.22)
 
-    # Start outside corridor and cross through it.
     offset = side * torch.empty((), device=env.device).uniform_(0.75, 1.35)
     along_jitter = torch.empty((), device=env.device).uniform_(-0.25, 0.35)
 
@@ -432,6 +445,25 @@ def _spawn_horizontal_path_obstacle(
     env.dyn_obs_radius[env_id, slot] = radius
     env.dyn_obs_active[env_id, slot] = True
     env.dyn_obs_scenario[env_id, slot] = 2
+
+    # Nonlinear along-path wobble.
+    env.dyn_obs_phase[env_id, slot] = torch.empty(
+        (),
+        device=env.device,
+    ).uniform_(0.0, 2.0 * math.pi)
+
+    env.dyn_obs_omega[env_id, slot] = torch.empty(
+        (),
+        device=env.device,
+    ).uniform_(0.8, 1.8)
+
+    env.dyn_obs_amp[env_id, slot] = torch.empty(
+        (),
+        device=env.device,
+    ).uniform_(0.10, 0.30)
+
+    # Crossing obstacle wobbles along the path.
+    env.dyn_obs_normal[env_id, slot] = tangent
 
 
 def _spawn_side_obstacle(
@@ -497,6 +529,12 @@ def _spawn_side_obstacle(
     else:
         env.dyn_obs_vel_xy[env_id, slot] = 0.0
         env.dyn_obs_scenario[env_id, slot] = 5
+
+        # Explicitly disable nonlinear motion for static side clutter.
+        env.dyn_obs_phase[env_id, slot] = 0.0
+        env.dyn_obs_omega[env_id, slot] = 0.0
+        env.dyn_obs_amp[env_id, slot] = 0.0
+        env.dyn_obs_normal[env_id, slot] = 0.0
 
 
 def _spawn_controlled_level16_obstacles(
@@ -953,8 +991,13 @@ def update_dynamic_obstacles_tensor(env, env_ids: torch.Tensor | None = None):
 
     # Nonlinear motion for scenario 4:
     # linear forward motion + sinusoidal sideways wobble.
-    nonlinear_mask = env.dyn_obs_active[env_ids] & (env.dyn_obs_scenario[env_ids] == 4)
+    # nonlinear_mask = env.dyn_obs_active[env_ids] & (env.dyn_obs_scenario[env_ids] == 4)
 
+    nonlinear_mask = (
+        env.dyn_obs_active[env_ids]
+        & (env.dyn_obs_amp[env_ids].abs() > 1.0e-6)
+        & (torch.norm(env.dyn_obs_normal[env_ids], dim=-1) > 1.0e-6)
+    )
     if torch.any(nonlinear_mask):
         old_phase = env.dyn_obs_phase[env_ids].clone()
 

@@ -163,7 +163,9 @@ def dynamic_time_to_collision_penalty(
     robot_vel = robot.data.root_lin_vel_w[:, :2]
 
     rel_p = env.dyn_obs_xy - robot_xy[:, None, :]
-    rel_v = env.dyn_obs_vel_xy - robot_vel[:, None, :]
+    # rel_v = env.dyn_obs_vel_xy - robot_vel[:, None, :]
+    obs_vel = getattr(env, "dyn_obs_eff_vel_xy", env.dyn_obs_vel_xy)
+    rel_v = obs_vel - robot_vel[:, None, :]
     rel_v2 = torch.sum(rel_v * rel_v, dim=-1).clamp_min(1e-6)
 
     # Time of closest approach. Positive means future approach.

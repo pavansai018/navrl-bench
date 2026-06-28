@@ -451,22 +451,46 @@ class RewardsCfg:
         weight=config.REWARDS['timeout_failure']['weight'],
     )
 
-    adaptive_future_path_tracking = RewTerm(
-        func=custom_rewards.adaptive_future_aware_path_tracking_penalty,
-        weight=config.REWARDS['adaptive_future_path_tracking']['weight'],
+    future_aware_action_teacher = RewTerm(
+        func=custom_rewards.future_aware_action_teacher_penalty,
+        weight=config.REWARDS['future_aware_action_teacher']['weight'],
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "horizon_s": config.REWARDS['adaptive_future_path_tracking']['params']['horizon_s'],
-            "lookahead_m": config.REWARDS['adaptive_future_path_tracking']['params']['lookahead_m'],
-            "corridor_half_width": config.REWARDS['adaptive_future_path_tracking']['params']['corridor_half_width'],
-            "robot_radius": config.REWARDS['adaptive_future_path_tracking']['params']['robot_radius'],
-            "track_free_cte": config.REWARDS['adaptive_future_path_tracking']['params']['track_free_cte'],
-            "track_max_cte": config.REWARDS['adaptive_future_path_tracking']['params']['track_max_cte'],
-            "detour_free_cte": config.REWARDS['adaptive_future_path_tracking']['params']['detour_free_cte'],
-            "detour_max_cte": config.REWARDS['adaptive_future_path_tracking']['params']['detour_max_cte'],
-            "max_lateral_speed": config.ACTIONS['max_vx'],
+            "horizon_s": config.REWARDS['future_aware_action_teacher']['params']['horizon_s'],
+            "lookahead_m": config.REWARDS['future_aware_action_teacher']['params']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['future_aware_action_teacher']['params']['corridor_half_width'],
+            "robot_radius": config.REWARDS['future_aware_action_teacher']['params']['robot_radius'],
+
+            "normal_track_speed": config.REWARDS['future_aware_action_teacher']['params']['normal_track_speed'],
+            "cautious_track_speed": config.REWARDS['future_aware_action_teacher']['params']['cautious_track_speed'],
+            "detour_forward_speed": config.REWARDS['future_aware_action_teacher']['params']['detour_forward_speed'],
+            "detour_lateral_speed": config.REWARDS['future_aware_action_teacher']['params']['detour_lateral_speed'],
+
+            "k_track_cte": config.REWARDS['future_aware_action_teacher']['params']['k_track_cte'],
+            "k_detour_cte": config.REWARDS['future_aware_action_teacher']['params']['k_detour_cte'],
+            "max_track_lateral_speed": config.REWARDS['future_aware_action_teacher']['params']['max_track_lateral_speed'],
+            "max_detour_correction_speed": config.REWARDS['future_aware_action_teacher']['params']['max_detour_correction_speed'],
+
+            "yaw_gain": config.REWARDS['future_aware_action_teacher']['params']['yaw_gain'],
         },
     )
+
+    # adaptive_future_path_tracking = RewTerm(
+    #     func=custom_rewards.adaptive_future_aware_path_tracking_penalty,
+    #     weight=config.REWARDS['adaptive_future_path_tracking']['weight'],
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "horizon_s": config.REWARDS['adaptive_future_path_tracking']['params']['horizon_s'],
+    #         "lookahead_m": config.REWARDS['adaptive_future_path_tracking']['params']['lookahead_m'],
+    #         "corridor_half_width": config.REWARDS['adaptive_future_path_tracking']['params']['corridor_half_width'],
+    #         "robot_radius": config.REWARDS['adaptive_future_path_tracking']['params']['robot_radius'],
+    #         "track_free_cte": config.REWARDS['adaptive_future_path_tracking']['params']['track_free_cte'],
+    #         "track_max_cte": config.REWARDS['adaptive_future_path_tracking']['params']['track_max_cte'],
+    #         "detour_free_cte": config.REWARDS['adaptive_future_path_tracking']['params']['detour_free_cte'],
+    #         "detour_max_cte": config.REWARDS['adaptive_future_path_tracking']['params']['detour_max_cte'],
+    #         "max_lateral_speed": config.ACTIONS['max_vx'],
+    #     },
+    # )
 
     # future_clear_no_lateral_bypass = RewTerm(
     #     func=custom_rewards.future_clear_no_lateral_bypass_penalty,

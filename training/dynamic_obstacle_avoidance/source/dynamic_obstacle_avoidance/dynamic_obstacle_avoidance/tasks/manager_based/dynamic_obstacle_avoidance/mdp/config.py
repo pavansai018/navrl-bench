@@ -124,7 +124,11 @@ REWARDS: dict = {
     'gated_detour': {'weight': 4.0, 'params': {'danger_clearance': 0.55, 'max_cte': 1.20}},
     'dynamic_corridor_closing': {'weight': -10.0, 'params': {'lookahead_m': 3.0, 'corridor_half_width': 0.65, 'danger_clearance': 0.80, 'robot_radius': 0.22,}},
     'future_clear_no_lateral_bypass': {'weight': -10.0, 'params': {'horizon_s': 1.0, 'lookahead_m': 2.5, 'corridor_half_width': 0.45, 'free_cte': 0.30, 'max_cte': 1.0, }},
-    'adaptive_future_path_tracking': {'weight': -10.0, 'params': {'horizon_s': 1.0, 'lookahead_m': 2.5, 'corridor_half_width': 0.45, 'robot_radius': 0.22, 'track_free_cte': 0.30, 'track_max_cte': 0.90, 'detour_free_cte': 0.90, 'detour_max_cte': 1.50, }}
+    'adaptive_future_path_tracking': {'weight': -10.0, 'params': {'horizon_s': 1.0, 'lookahead_m': 2.5, 'corridor_half_width': 0.45, 'robot_radius': 0.22, 'track_free_cte': 0.30, 'track_max_cte': 0.90, 'detour_free_cte': 0.90, 'detour_max_cte': 1.50, }},
+    'future_aware_action_teacher': {'weight': -4.0, 'params': {'horizon_s': 1.0, 'lookahead_m': 2.5, 'corridor_half_width': 0.45, 'robot_radius': 0.22, 
+                                                               'normal_track_speed': 0.45, 'cautious_track_speed': 0.2, 'detour_forward_speed': 0.12, 'detour_lateral_speed': 0.3, 
+                                                               'k_track_cte': 0.8, 'k_detour_cte': 0.25, 'max_track_lateral_speed': 0.2, 
+                                                               'max_detour_correction_speed': 0.12, 'yaw_gain': 1.5,}},
 }
 
 TERMINATIONS: dict = {

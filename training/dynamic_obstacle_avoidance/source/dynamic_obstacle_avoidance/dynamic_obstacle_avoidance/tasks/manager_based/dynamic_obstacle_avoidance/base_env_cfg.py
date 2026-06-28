@@ -451,19 +451,36 @@ class RewardsCfg:
         weight=config.REWARDS['timeout_failure']['weight'],
     )
 
-    future_clear_no_lateral_bypass = RewTerm(
-        func=custom_rewards.future_clear_no_lateral_bypass_penalty,
-        weight=config.REWARDS['future_clear_no_lateral_bypass']['weight'],
+    adaptive_future_path_tracking = RewTerm(
+        func=custom_rewards.adaptive_future_aware_path_tracking_penalty,
+        weight=config.REWARDS['adaptive_future_path_tracking']['weight'],
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "horizon_s": config.REWARDS['future_clear_no_lateral_bypass']['params']['horizon_s'],
-            "lookahead_m": config.REWARDS['future_clear_no_lateral_bypass']['params']['lookahead_m'],
-            "corridor_half_width": config.REWARDS['future_clear_no_lateral_bypass']['params']['corridor_half_width'],
-            "free_cte": config.REWARDS['future_clear_no_lateral_bypass']['params']['free_cte'],
-            "max_cte": config.REWARDS['future_clear_no_lateral_bypass']['params']['max_cte'],
-            "max_vy": config.ACTIONS['max_vx'],
+            "horizon_s": config.REWARDS['adaptive_future_path_tracking']['params']['horizon_s'],
+            "lookahead_m": config.REWARDS['adaptive_future_path_tracking']['params']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['adaptive_future_path_tracking']['params']['corridor_half_width'],
+            "robot_radius": config.REWARDS['adaptive_future_path_tracking']['params']['robot_radius'],
+            "track_free_cte": config.REWARDS['adaptive_future_path_tracking']['params']['track_free_cte'],
+            "track_max_cte": config.REWARDS['adaptive_future_path_tracking']['params']['track_max_cte'],
+            "detour_free_cte": config.REWARDS['adaptive_future_path_tracking']['params']['detour_free_cte'],
+            "detour_max_cte": config.REWARDS['adaptive_future_path_tracking']['params']['detour_max_cte'],
+            "max_lateral_speed": config.ACTIONS['max_vx'],
         },
     )
+
+    # future_clear_no_lateral_bypass = RewTerm(
+    #     func=custom_rewards.future_clear_no_lateral_bypass_penalty,
+    #     weight=config.REWARDS['future_clear_no_lateral_bypass']['weight'],
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "horizon_s": config.REWARDS['future_clear_no_lateral_bypass']['params']['horizon_s'],
+    #         "lookahead_m": config.REWARDS['future_clear_no_lateral_bypass']['params']['lookahead_m'],
+    #         "corridor_half_width": config.REWARDS['future_clear_no_lateral_bypass']['params']['corridor_half_width'],
+    #         "free_cte": config.REWARDS['future_clear_no_lateral_bypass']['params']['free_cte'],
+    #         "max_cte": config.REWARDS['future_clear_no_lateral_bypass']['params']['max_cte'],
+    #         "max_vy": config.ACTIONS['max_vx'],
+    #     },
+    # )
 
     # dynamic_corridor_closing = RewTerm(
     #     func=custom_rewards.dynamic_corridor_closing_penalty,
@@ -523,16 +540,16 @@ class RewardsCfg:
     #     },
     # )
 
-    dynamic_forward_blocked = RewTerm(
-        func=custom_rewards.dynamic_forward_blocked_penalty,
-        weight=config.REWARDS['dynamic_forward_blocked']['weight'],
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "lookahead_m": config.REWARDS['dynamic_forward_blocked']['lookahead_m'],
-            "corridor_half_width": config.REWARDS['dynamic_forward_blocked']['corridor_half_width'],
-            "max_vx": config.ACTIONS['max_vx'],
-        },
-    )
+    # dynamic_forward_blocked = RewTerm(
+    #     func=custom_rewards.dynamic_forward_blocked_penalty,
+    #     weight=config.REWARDS['dynamic_forward_blocked']['weight'],
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "lookahead_m": config.REWARDS['dynamic_forward_blocked']['lookahead_m'],
+    #         "corridor_half_width": config.REWARDS['dynamic_forward_blocked']['corridor_half_width'],
+    #         "max_vx": config.ACTIONS['max_vx'],
+    #     },
+    # )
 
     # dynamic_bad_lateral = RewTerm(
     #     func=custom_rewards.dynamic_bad_lateral_penalty,

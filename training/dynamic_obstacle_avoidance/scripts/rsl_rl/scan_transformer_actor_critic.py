@@ -128,7 +128,7 @@ class ScanHistoryTransformerActor(nn.Module):
         self.num_rays = int(num_rays)
         self.scan_dim = self.scan_history_len * self.num_rays
         self.motion_dim = 6
-
+        self.scan_max_range = 10.0
         self.expected_actor_obs_dim = self.path_dim + self.scan_dim + self.motion_dim
 
         ray_feature_dim = (
@@ -231,8 +231,29 @@ class ScanHistoryTransformerActor(nn.Module):
             self.num_rays,
         )
 
-        scan_hist = torch.clamp(scan_hist, 0.0, 4.0)
-        scan_norm = scan_hist / 4.0
+        # scan_hist = torch.clamp(scan_hist, 0.0, 4.0)
+        # scan_norm = scan_hist / 4.0
+        # observation scan range is 10 m.
+        # Handle both cases safely:
+        #   case A: scan_history already normalized [0, 1]
+        #   case B: scan_history is raw meters [0, 10]
+
+        scan_hist = torch.nan_to_num(
+            scan_hist,
+            nan=self.scan_max_range,
+            posinf=self.scan_max_range,
+            neginf=0.0,
+        )
+
+        max_val = scan_hist.detach().amax()
+
+        if max_val <= 1.5:
+            # scan_history is already normalized.
+            scan_norm = torch.clamp(scan_hist, 0.0, 1.0)
+        else:
+            # scan_history is in meters.
+            scan_hist = torch.clamp(scan_hist, 0.0, self.scan_max_range)
+            scan_norm = scan_hist / self.scan_max_range
 
         scan_delta = scan_norm[:, :-1, :] - scan_norm[:, 1:, :]
         current_scan = scan_norm[:, -1:, :]

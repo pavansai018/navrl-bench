@@ -987,3 +987,174 @@ def future_clear_no_lateral_bypass_penalty(
     return future_clear_gate.float() * (
         0.7 * lateral_speed_score + 0.3 * cte_score
     )
+
+def _future_dynamic_corridor_blocked(
+    env,
+    asset_cfg: SceneEntityCfg,
+    horizon_s: float = 1.0,
+    lookahead_m: float = 2.5,
+    corridor_half_width: float = 0.45,
+    robot_radius: float = 0.22,
+) -> torch.Tensor:
+    """
+    Predict whether dynamic obstacles will block the near path corridor
+    after horizon_s seconds.
+
+    Reward-only. Not actor observation.
+    """
+
+    if not hasattr(env, "dyn_obs_xy") or not hasattr(env, "dyn_obs_active"):
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    _, _, tangent, normal = _path_tangent_normal(env, robot_xy, lookahead=4)
+
+    t = float(horizon_s)
+
+    # Predict future obstacle position.
+    obs_xy_future = env.dyn_obs_xy + env.dyn_obs_vel_xy * t
+
+    # Include nonlinear obstacle wobble if present.
+    if hasattr(env, "dyn_obs_phase"):
+        nonlinear_mask = env.dyn_obs_active & (env.dyn_obs_scenario == 4)
+
+        if torch.any(nonlinear_mask):
+            phase_now = env.dyn_obs_phase
+            phase_future = env.dyn_obs_phase + env.dyn_obs_omega * t
+
+            delta_wobble = (
+                torch.sin(phase_future) - torch.sin(phase_now)
+            ) * env.dyn_obs_amp
+
+            obs_xy_future = obs_xy_future + (
+                env.dyn_obs_normal
+                * delta_wobble.unsqueeze(-1)
+                * nonlinear_mask.unsqueeze(-1).float()
+            )
+
+    rel_future = obs_xy_future - robot_xy[:, None, :]
+
+    along = torch.sum(rel_future * tangent[:, None, :], dim=-1)
+    lateral = torch.sum(rel_future * normal[:, None, :], dim=-1)
+
+    effective_half_width = (
+        corridor_half_width
+        + env.dyn_obs_radius
+        + robot_radius
+    )
+
+    future_blocked = (
+        env.dyn_obs_active
+        & (along > -0.25)
+        & (along < lookahead_m)
+        & (torch.abs(lateral) < effective_half_width)
+    )
+
+    return future_blocked.any(dim=-1)
+
+
+def adaptive_future_aware_path_tracking_penalty(
+    env,
+    asset_cfg: SceneEntityCfg,
+    horizon_s: float = 1.0,
+    lookahead_m: float = 2.5,
+    corridor_half_width: float = 0.45,
+    robot_radius: float = 0.22,
+    track_free_cte: float = 0.30,
+    track_max_cte: float = 0.90,
+    detour_free_cte: float = 0.90,
+    detour_max_cte: float = 1.50,
+    max_lateral_speed: float = 0.75,
+) -> torch.Tensor:
+    """
+    Main intelligent path tracking reward.
+
+    Logic:
+
+    1. If path is NOT persistently blocked:
+       punish lateral escape and large CTE.
+       This covers:
+           - path clear now
+           - path will block soon, but not yet
+           - path blocked now, but clear after horizon_s
+
+    2. If path IS persistently blocked:
+       allow detour, but still prevent unlimited path abandonment.
+
+    This is not a hard corridor penalty.
+    This is conditional:
+        deviation allowed only when now_blocked and future_blocked are both true.
+    """
+
+    robot = env.scene[asset_cfg.name]
+
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    vel_w = robot.data.root_lin_vel_w[:, :2]
+
+    # Current dynamic obstacle blocking near path corridor.
+    now_blocked, _, _, _, normal = _dynamic_corridor_obstacle_info(
+        env,
+        asset_cfg,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+    )
+
+    # Future dynamic obstacle blocking near path corridor.
+    future_blocked = _future_dynamic_corridor_blocked(
+        env,
+        asset_cfg,
+        horizon_s=horizon_s,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+        robot_radius=robot_radius,
+    )
+
+    # Only this condition allows a real bypass.
+    detour_allowed = now_blocked & future_blocked
+
+    # In all other cases, robot should track path.
+    tracking_required = ~detour_allowed
+
+    # Cross-track error.
+    cte = nav2_cross_track_penalty(
+        env,
+        asset_cfg,
+        max_error=detour_max_cte,
+    )
+
+    # Lateral speed relative to path normal.
+    v_lat = torch.sum(vel_w * normal, dim=-1)
+    lateral_speed_score = torch.clamp(
+        torch.abs(v_lat) / max_lateral_speed,
+        0.0,
+        1.0,
+    )
+
+    # Narrow tracking penalty:
+    # used when deviation is NOT required.
+    track_cte_score = torch.clamp(
+        (cte - track_free_cte) / max(track_max_cte - track_free_cte, 1.0e-6),
+        0.0,
+        1.0,
+    )
+
+    tracking_penalty = (
+        0.70 * track_cte_score
+        + 0.30 * lateral_speed_score
+    )
+
+    # Detour penalty:
+    # used only when path is persistently blocked.
+    # This allows normal bypass up to detour_free_cte.
+    detour_cte_score = torch.clamp(
+        (cte - detour_free_cte) / max(detour_max_cte - detour_free_cte, 1.0e-6),
+        0.0,
+        1.0,
+    )
+
+    detour_penalty = detour_cte_score
+
+    return (
+        tracking_required.float() * tracking_penalty
+        + detour_allowed.float() * detour_penalty
+    )

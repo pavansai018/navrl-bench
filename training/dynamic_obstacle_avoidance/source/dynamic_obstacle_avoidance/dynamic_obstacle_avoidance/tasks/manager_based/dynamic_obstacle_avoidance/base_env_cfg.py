@@ -451,6 +451,18 @@ class RewardsCfg:
         weight=config.REWARDS['timeout_failure']['weight'],
     )
 
+    dynamic_corridor_speed = RewTerm(
+        func=custom_rewards.dynamic_corridor_speed_penalty,
+        weight=config.REWARDS['dynamic_corridor_speed']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "lookahead_m": config.REWARDS['dynamic_corridor_speed']['params']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['dynamic_corridor_speed']['params']['corridor_half_width'],
+            "danger_dist": config.REWARDS['dynamic_corridor_speed']['params']['danger_dist'],
+            "max_speed": config.ACTIONS['max_vx'],
+        },
+    )
+
     # gated_detour = RewTerm(
     #     func=custom_rewards.gated_detour_reward,
     #     weight=config.REWARDS['gated_detour']['weight'],
@@ -496,16 +508,16 @@ class RewardsCfg:
     #     },
     # )
 
-    # dynamic_forward_blocked = RewTerm(
-    #     func=custom_rewards.dynamic_forward_blocked_penalty,
-    #     weight=config.REWARDS['dynamic_forward_blocked']['weight'],
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot"),
-    #         "lookahead_m": config.REWARDS['dynamic_forward_blocked']['lookahead_m'],
-    #         "corridor_half_width": config.REWARDS['dynamic_forward_blocked']['corridor_half_width'],
-    #         "max_vx": config.ACTIONS['max_vx'],
-    #     },
-    # )
+    dynamic_forward_blocked = RewTerm(
+        func=custom_rewards.dynamic_forward_blocked_penalty,
+        weight=config.REWARDS['dynamic_forward_blocked']['weight'],
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "lookahead_m": config.REWARDS['dynamic_forward_blocked']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['dynamic_forward_blocked']['corridor_half_width'],
+            "max_vx": config.ACTIONS['max_vx'],
+        },
+    )
 
     # dynamic_bad_lateral = RewTerm(
     #     func=custom_rewards.dynamic_bad_lateral_penalty,

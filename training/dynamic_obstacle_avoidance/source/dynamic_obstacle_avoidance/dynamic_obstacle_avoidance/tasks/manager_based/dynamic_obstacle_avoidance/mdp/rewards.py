@@ -791,3 +791,36 @@ def gated_detour_reward(
 
     # Only reward moving away from a nearby obstacle.
     return danger * bounded_detour * torch.clamp(away_speed, min=0.0)
+
+def dynamic_corridor_speed_penalty(
+    env,
+    asset_cfg: SceneEntityCfg,
+    lookahead_m: float = 2.0,
+    corridor_half_width: float = 0.55,
+    danger_dist: float = 0.90,
+    max_speed: float = 0.75,
+) -> torch.Tensor:
+    """
+    Open-map dynamic obstacle penalty.
+
+    If a dynamic obstacle is in the near path corridor,
+    penalize high robot speed near it.
+
+    This directly attacks dynamic collisions.
+    It does not care about walls or side choice.
+    """
+
+    valid, nearest_dist, _, _, _ = _dynamic_corridor_obstacle_info(
+        env,
+        asset_cfg,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+    )
+
+    robot = env.scene[asset_cfg.name]
+    speed = torch.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
+
+    danger = torch.clamp((danger_dist - nearest_dist) / danger_dist, 0.0, 1.0)
+    speed_score = torch.clamp(speed / max_speed, 0.0, 1.0)
+
+    return valid.float() * danger * speed_score

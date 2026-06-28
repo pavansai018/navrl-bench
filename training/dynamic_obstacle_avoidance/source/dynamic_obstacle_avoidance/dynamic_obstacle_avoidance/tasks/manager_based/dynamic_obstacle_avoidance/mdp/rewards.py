@@ -227,6 +227,8 @@ def mecanum_usage_metric(env) -> torch.Tensor:
 def time_penalty(env) -> torch.Tensor:
     return torch.ones(env.num_envs, device=env.device)
 
+def timeout_penalty(env) -> torch.Tensor:
+    return (env.episode_length_buf >= env.max_episode_length - 1).float()
 
 # def no_wait_penalty(env, asset_cfg: SceneEntityCfg, speed_threshold: float = 0.10) -> torch.Tensor:
 #     robot = env.scene[asset_cfg.name]

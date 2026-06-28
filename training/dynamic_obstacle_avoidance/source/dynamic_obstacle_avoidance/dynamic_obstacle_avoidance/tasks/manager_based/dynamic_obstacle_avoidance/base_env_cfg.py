@@ -451,15 +451,16 @@ class RewardsCfg:
         weight=config.REWARDS['timeout_failure']['weight'],
     )
 
-    dynamic_corridor_speed = RewTerm(
-        func=custom_rewards.dynamic_corridor_speed_penalty,
-        weight=config.REWARDS['dynamic_corridor_speed']['weight'],
+    dynamic_corridor_closing = RewTerm(
+        func=custom_rewards.dynamic_corridor_closing_penalty,
+        weight=config.REWARDS['dynamic_corridor_closing']['weight'],
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "lookahead_m": config.REWARDS['dynamic_corridor_speed']['params']['lookahead_m'],
-            "corridor_half_width": config.REWARDS['dynamic_corridor_speed']['params']['corridor_half_width'],
-            "danger_dist": config.REWARDS['dynamic_corridor_speed']['params']['danger_dist'],
-            "max_speed": config.ACTIONS['max_vx'],
+            "lookahead_m": config.REWARDS['dynamic_corridor_closing']['params']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['dynamic_corridor_closing']['params']['corridor_half_width'],
+            "danger_clearance": config.REWARDS['dynamic_corridor_closing']['params']['danger_clearance'],
+            "max_closing_speed": config.ACTIONS['max_vx'],
+            'robot_radius': config.REWARDS['dynamic_corridor_closing']['params']['robot_radius'],
         },
     )
 

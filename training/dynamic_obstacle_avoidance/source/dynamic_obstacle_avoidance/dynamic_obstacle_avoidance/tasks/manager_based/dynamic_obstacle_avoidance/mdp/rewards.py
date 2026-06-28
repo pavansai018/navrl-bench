@@ -792,22 +792,20 @@ def gated_detour_reward(
     # Only reward moving away from a nearby obstacle.
     return danger * bounded_detour * torch.clamp(away_speed, min=0.0)
 
-def dynamic_corridor_speed_penalty(
+def dynamic_corridor_closing_penalty(
     env,
     asset_cfg: SceneEntityCfg,
-    lookahead_m: float = 2.0,
-    corridor_half_width: float = 0.55,
-    danger_dist: float = 0.90,
-    max_speed: float = 0.75,
+    lookahead_m: float = 3.0,
+    corridor_half_width: float = 0.65,
+    danger_clearance: float = 0.80,
+    robot_radius: float = 0.22,
+    max_closing_speed: float = 0.75,
 ) -> torch.Tensor:
     """
-    Open-map dynamic obstacle penalty.
+    Penalize moving closer to a dynamic obstacle inside the near path corridor.
 
-    If a dynamic obstacle is in the near path corridor,
-    penalize high robot speed near it.
-
-    This directly attacks dynamic collisions.
-    It does not care about walls or side choice.
+    This targets the actual failure:
+        robot bypasses/cuts too close to moving obstacle -> dynamic collision
     """
 
     valid, nearest_dist, _, _, _ = _dynamic_corridor_obstacle_info(
@@ -817,10 +815,53 @@ def dynamic_corridor_speed_penalty(
         corridor_half_width=corridor_half_width,
     )
 
+    if not hasattr(env, "dyn_obs_xy"):
+        return torch.zeros(env.num_envs, device=env.device)
+
     robot = env.scene[asset_cfg.name]
-    speed = torch.norm(robot.data.root_lin_vel_w[:, :2], dim=-1)
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    robot_vel = robot.data.root_lin_vel_w[:, :2]
 
-    danger = torch.clamp((danger_dist - nearest_dist) / danger_dist, 0.0, 1.0)
-    speed_score = torch.clamp(speed / max_speed, 0.0, 1.0)
+    rel = env.dyn_obs_xy - robot_xy[:, None, :]
+    dist = torch.norm(rel, dim=-1).clamp_min(1.0e-6)
 
-    return valid.float() * danger * speed_score
+    # use effective velocity if available, otherwise old linear velocity
+    obs_vel = getattr(env, "dyn_obs_eff_vel_xy", env.dyn_obs_vel_xy)
+
+    rel_vel = obs_vel - robot_vel[:, None, :]
+
+    # Positive closing_speed means distance is decreasing.
+    rel_dir = rel / dist.unsqueeze(-1)
+    closing_speed = -torch.sum(rel_vel * rel_dir, dim=-1)
+
+    # Only consider active obstacles in near path corridor.
+    robot_xy2 = _robot_xy(env, asset_cfg.name)
+    _, _, tangent, normal = _path_tangent_normal(env, robot_xy2, lookahead=4)
+
+    along = torch.sum(rel * tangent[:, None, :], dim=-1)
+    lateral = torch.sum(rel * normal[:, None, :], dim=-1)
+
+    in_corridor = (
+        env.dyn_obs_active
+        & (along > -0.25)
+        & (along < lookahead_m)
+        & (torch.abs(lateral) < corridor_half_width)
+    )
+
+    inflated_clearance = dist - env.dyn_obs_radius - robot_radius
+
+    danger = torch.clamp(
+        (danger_clearance - inflated_clearance) / danger_clearance,
+        0.0,
+        1.0,
+    )
+
+    closing_score = torch.clamp(
+        closing_speed / max_closing_speed,
+        0.0,
+        1.0,
+    )
+
+    penalty_per_obs = in_corridor.float() * danger * closing_score
+
+    return torch.max(penalty_per_obs, dim=-1).values

@@ -865,3 +865,125 @@ def dynamic_corridor_closing_penalty(
     penalty_per_obs = in_corridor.float() * danger * closing_score
 
     return torch.max(penalty_per_obs, dim=-1).values
+
+def _future_dynamic_path_blocked(
+    env,
+    asset_cfg: SceneEntityCfg,
+    horizon_s: float = 1.0,
+    lookahead_m: float = 2.5,
+    corridor_half_width: float = 0.45,
+) -> torch.Tensor:
+    """
+    Predict whether dynamic obstacles will still block the near path corridor
+    after horizon_s seconds.
+
+    Reward-only. Not actor observation.
+    """
+
+    if not hasattr(env, "dyn_obs_xy"):
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    _, _, tangent, normal = _path_tangent_normal(env, robot_xy, lookahead=4)
+
+    t = float(horizon_s)
+
+    # Predict obstacle future position.
+    obs_xy_future = env.dyn_obs_xy + env.dyn_obs_vel_xy * t
+
+    # Include nonlinear scenario-4 wobble prediction.
+    if hasattr(env, "dyn_obs_phase"):
+        nonlinear_mask = env.dyn_obs_active & (env.dyn_obs_scenario == 4)
+
+        if torch.any(nonlinear_mask):
+            phase_now = env.dyn_obs_phase
+            phase_future = env.dyn_obs_phase + env.dyn_obs_omega * t
+
+            delta_wobble = (
+                torch.sin(phase_future) - torch.sin(phase_now)
+            ) * env.dyn_obs_amp
+
+            obs_xy_future = obs_xy_future + (
+                env.dyn_obs_normal
+                * delta_wobble.unsqueeze(-1)
+                * nonlinear_mask.unsqueeze(-1).float()
+            )
+
+    rel_future = obs_xy_future - robot_xy[:, None, :]
+
+    along_future = torch.sum(rel_future * tangent[:, None, :], dim=-1)
+    lateral_future = torch.sum(rel_future * normal[:, None, :], dim=-1)
+
+    future_blocked = (
+        env.dyn_obs_active
+        & (along_future > -0.25)
+        & (along_future < lookahead_m)
+        & (torch.abs(lateral_future) < corridor_half_width)
+    )
+
+    return future_blocked.any(dim=-1)
+
+
+def future_clear_no_lateral_bypass_penalty(
+    env,
+    asset_cfg: SceneEntityCfg,
+    horizon_s: float = 1.0,
+    lookahead_m: float = 2.5,
+    corridor_half_width: float = 0.45,
+    free_cte: float = 0.30,
+    max_cte: float = 1.00,
+    max_vy: float = 0.75,
+) -> torch.Tensor:
+    """
+    Penalize unnecessary lateral bypass only when:
+
+        dynamic obstacle is blocking now
+        BUT the same near path corridor will be clear after horizon_s
+
+    This is the behavior you asked for:
+        if path will be free next second, keep tracking the path.
+    """
+
+    # Is a dynamic obstacle blocking the near path corridor now?
+    now_blocked, _, _, _, normal = _dynamic_corridor_obstacle_info(
+        env,
+        asset_cfg,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+    )
+
+    # Will the near path corridor still be blocked after horizon_s?
+    future_blocked = _future_dynamic_path_blocked(
+        env,
+        asset_cfg,
+        horizon_s=horizon_s,
+        lookahead_m=lookahead_m,
+        corridor_half_width=corridor_half_width,
+    )
+
+    # This is the key condition:
+    # blocked now, clear soon -> do not bypass wide.
+    future_clear_gate = now_blocked & (~future_blocked)
+
+    robot = env.scene[asset_cfg.name]
+    robot_xy = _robot_xy(env, asset_cfg.name)
+    vel_w = robot.data.root_lin_vel_w[:, :2]
+
+    # Lateral velocity relative to path.
+    v_lat = torch.sum(vel_w * normal, dim=-1)
+    lateral_speed_score = torch.clamp(torch.abs(v_lat) / max_vy, 0.0, 1.0)
+
+    # Cross-track error.
+    cte = nav2_cross_track_penalty(env, asset_cfg, max_error=max_cte)
+    cte_score = torch.clamp(
+        (cte - free_cte) / max(max_cte - free_cte, 1.0e-6),
+        0.0,
+        1.0,
+    )
+
+    # Penalize both:
+    # 1. moving sideways unnecessarily
+    # 2. already being too far from path
+    return future_clear_gate.float() * (
+        0.7 * lateral_speed_score + 0.3 * cte_score
+    )

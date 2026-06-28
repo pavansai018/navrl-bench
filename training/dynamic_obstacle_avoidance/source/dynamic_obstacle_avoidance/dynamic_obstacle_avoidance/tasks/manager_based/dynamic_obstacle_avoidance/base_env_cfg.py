@@ -451,18 +451,32 @@ class RewardsCfg:
         weight=config.REWARDS['timeout_failure']['weight'],
     )
 
-    dynamic_corridor_closing = RewTerm(
-        func=custom_rewards.dynamic_corridor_closing_penalty,
-        weight=config.REWARDS['dynamic_corridor_closing']['weight'],
+    future_clear_no_lateral_bypass = RewTerm(
+        func=custom_rewards.future_clear_no_lateral_bypass_penalty,
+        weight=config.REWARDS['future_clear_no_lateral_bypass']['weight'],
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "lookahead_m": config.REWARDS['dynamic_corridor_closing']['params']['lookahead_m'],
-            "corridor_half_width": config.REWARDS['dynamic_corridor_closing']['params']['corridor_half_width'],
-            "danger_clearance": config.REWARDS['dynamic_corridor_closing']['params']['danger_clearance'],
-            "max_closing_speed": config.ACTIONS['max_vx'],
-            'robot_radius': config.REWARDS['dynamic_corridor_closing']['params']['robot_radius'],
+            "horizon_s": config.REWARDS['future_clear_no_lateral_bypass']['params']['horizon_s'],
+            "lookahead_m": config.REWARDS['future_clear_no_lateral_bypass']['params']['lookahead_m'],
+            "corridor_half_width": config.REWARDS['future_clear_no_lateral_bypass']['params']['corridor_half_width'],
+            "free_cte": config.REWARDS['future_clear_no_lateral_bypass']['params']['free_cte'],
+            "max_cte": config.REWARDS['future_clear_no_lateral_bypass']['params']['max_cte'],
+            "max_vy": config.ACTIONS['max_vx'],
         },
     )
+
+    # dynamic_corridor_closing = RewTerm(
+    #     func=custom_rewards.dynamic_corridor_closing_penalty,
+    #     weight=config.REWARDS['dynamic_corridor_closing']['weight'],
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "lookahead_m": config.REWARDS['dynamic_corridor_closing']['params']['lookahead_m'],
+    #         "corridor_half_width": config.REWARDS['dynamic_corridor_closing']['params']['corridor_half_width'],
+    #         "danger_clearance": config.REWARDS['dynamic_corridor_closing']['params']['danger_clearance'],
+    #         "max_closing_speed": config.ACTIONS['max_vx'],
+    #         'robot_radius': config.REWARDS['dynamic_corridor_closing']['params']['robot_radius'],
+    #     },
+    # )
 
     # gated_detour = RewTerm(
     #     func=custom_rewards.gated_detour_reward,

@@ -91,24 +91,30 @@ def infer_num_actions(num_actions, fallback=None) -> int:
     raise TypeError(
         f"Cannot infer num_actions. num_actions={num_actions}, fallback={fallback}"
     )
-
-
 class ScanHistoryTransformerActor(nn.Module):
     """
     Actor observation layout:
 
-    local_path_window       16
-    heading_error            1
-    cross_track_error        1
-    scan_history       8 * 144 = 1152
-    base_lin_vel             2
-    base_ang_vel             1
-    previous_action          3
+    path block:
+        local_path_window       16
+        heading_error            1
+        cross_track_error        1
+
+    scan:
+        scan_history       8 * 144 = 1152
+
+    motion:
+        base_lin_vel             2
+        base_ang_vel             1
+        previous_action          3
 
     Total = 1176
 
-    Actor input remains scan/path/velocity/previous-action only.
-    Auxiliary heads are training-only.
+    This version fixes:
+      - hard-coded 4m scan scaling
+      - scan pooling before path fusion
+      - weak crossing-obstacle representation
+      - no path-conditioned ray attention
     """
 
     def __init__(
@@ -120,6 +126,7 @@ class ScanHistoryTransformerActor(nn.Module):
         nhead: int = 4,
         num_layers: int = 2,
         ff_dim: int = 256,
+        scan_max_range: float = 10.0,
     ):
         super().__init__()
 
@@ -128,9 +135,20 @@ class ScanHistoryTransformerActor(nn.Module):
         self.num_rays = int(num_rays)
         self.scan_dim = self.scan_history_len * self.num_rays
         self.motion_dim = 6
-        self.scan_max_range = 10.0
+        self.scan_max_range = float(scan_max_range)
+
         self.expected_actor_obs_dim = self.path_dim + self.scan_dim + self.motion_dim
 
+        # Per-ray features:
+        # scan history                  T
+        # temporal deltas               T - 1
+        # current range                 1
+        # min range                     1
+        # full-history closing          1
+        # ray angle sin/cos             2
+        # path-ray alignment            1
+        # current scan spatial grad     2
+        # near obstacle score           1
         ray_feature_dim = (
             self.scan_history_len
             + (self.scan_history_len - 1)
@@ -138,6 +156,9 @@ class ScanHistoryTransformerActor(nn.Module):
             + 1
             + 1
             + 2
+            + 1
+            + 2
+            + 1
         )
 
         self.ray_proj = nn.Sequential(
@@ -149,6 +170,27 @@ class ScanHistoryTransformerActor(nn.Module):
 
         self.ray_pos_embed = nn.Parameter(torch.zeros(1, self.num_rays, d_model))
         nn.init.trunc_normal_(self.ray_pos_embed, std=0.02)
+
+        self.path_encoder = nn.Sequential(
+            nn.Linear(self.path_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        self.motion_encoder = nn.Sequential(
+            nn.Linear(self.motion_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        # Path + motion condition injected into every ray token.
+        self.context_film = nn.Sequential(
+            nn.Linear(2 * d_model, 2 * d_model),
+            nn.GELU(),
+            nn.Linear(2 * d_model, 2 * d_model),
+        )
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -165,27 +207,31 @@ class ScanHistoryTransformerActor(nn.Module):
             num_layers=num_layers,
         )
 
-        self.path_encoder = nn.Sequential(
-            nn.Linear(self.path_dim, d_model),
+        # Path-conditioned cross attention:
+        # query = path/motion context
+        # key/value = ray tokens
+        self.context_query = nn.Sequential(
+            nn.Linear(2 * d_model, d_model),
             nn.LayerNorm(d_model),
             nn.GELU(),
             nn.Linear(d_model, d_model),
         )
 
-        self.motion_encoder = nn.Sequential(
-            nn.Linear(self.motion_dim, d_model),
-            nn.LayerNorm(d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model),
+        self.path_ray_attention = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=nhead,
+            dropout=0.0,
+            batch_first=True,
         )
 
+        # Extra learned score after ray tokens are already path-conditioned.
         self.ray_score = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.GELU(),
             nn.Linear(d_model, 1),
         )
 
-        fused_dim = d_model * 5
+        fused_dim = d_model * 6
         self.feature_dim = fused_dim
 
         self.actor_head = nn.Sequential(
@@ -210,6 +256,80 @@ class ScanHistoryTransformerActor(nn.Module):
             nn.Linear(128, 1),
         )
 
+    def _normalize_scan(self, scan_hist: torch.Tensor) -> torch.Tensor:
+        """
+        Handles both cases:
+
+        Case A:
+            scan_history already normalized [0, 1]
+
+        Case B:
+            scan_history is raw meters [0, scan_max_range]
+
+        Output:
+            scan_norm in [0, 1], where smaller = closer obstacle.
+        """
+
+        scan_hist = torch.nan_to_num(
+            scan_hist,
+            nan=self.scan_max_range,
+            posinf=self.scan_max_range,
+            neginf=0.0,
+        )
+
+        # Batch-level detection is okay because the observation convention
+        # is fixed during a run.
+        max_val = scan_hist.detach().amax()
+
+        if max_val <= 1.5:
+            return torch.clamp(scan_hist, 0.0, 1.0)
+
+        scan_hist = torch.clamp(scan_hist, 0.0, self.scan_max_range)
+        return scan_hist / self.scan_max_range
+
+    def _path_ray_alignment(
+        self,
+        path: torch.Tensor,
+        ray_angles: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Computes how relevant each ray direction is to the local path corridor.
+
+        path[:, :16] is assumed to be 8 local path xy points.
+        Output shape: [B, 1, R]
+        """
+
+        batch_size = path.shape[0]
+
+        path_xy = path[:, :16].reshape(batch_size, 8, 2)
+        path_norm = torch.norm(path_xy, dim=-1, keepdim=True)
+
+        valid = path_norm > 1.0e-4
+        path_dir = path_xy / path_norm.clamp_min(1.0e-6)
+
+        ray_dirs = torch.stack(
+            [torch.cos(ray_angles), torch.sin(ray_angles)],
+            dim=-1,
+        )  # [R, 2]
+
+        # [B, 8, R]
+        alignment = torch.einsum("bpd,rd->bpr", path_dir, ray_dirs)
+
+        # Invalid path points should not dominate.
+        alignment = torch.where(
+            valid,
+            alignment,
+            torch.full_like(alignment, -1.0),
+        )
+
+        # Best local-path alignment per ray.
+        alignment = torch.max(alignment, dim=1, keepdim=True).values
+
+        # Convert [-1, 1] -> [0, 1]
+        alignment = 0.5 * (alignment + 1.0)
+
+        return alignment.clamp(0.0, 1.0)
+
     def encode(self, obs: torch.Tensor) -> torch.Tensor:
         if obs.dim() != 2:
             obs = obs.reshape(obs.shape[0], -1)
@@ -219,11 +339,11 @@ class ScanHistoryTransformerActor(nn.Module):
                 f"Actor expected obs dim {self.expected_actor_obs_dim}, got {obs.shape[1]}"
             )
 
+        batch_size = obs.shape[0]
+
         path = obs[:, :18]
         scan_flat = obs[:, 18 : 18 + self.scan_dim]
         motion = obs[:, 18 + self.scan_dim : 18 + self.scan_dim + self.motion_dim]
-
-        batch_size = obs.shape[0]
 
         scan_hist = scan_flat.reshape(
             batch_size,
@@ -231,34 +351,29 @@ class ScanHistoryTransformerActor(nn.Module):
             self.num_rays,
         )
 
-        # scan_hist = torch.clamp(scan_hist, 0.0, 4.0)
-        # scan_norm = scan_hist / 4.0
-        # observation scan range is 10 m.
-        # Handle both cases safely:
-        #   case A: scan_history already normalized [0, 1]
-        #   case B: scan_history is raw meters [0, 10]
+        scan_norm = self._normalize_scan(scan_hist)
 
-        scan_hist = torch.nan_to_num(
-            scan_hist,
-            nan=self.scan_max_range,
-            posinf=self.scan_max_range,
-            neginf=0.0,
-        )
-
-        max_val = scan_hist.detach().amax()
-
-        if max_val <= 1.5:
-            # scan_history is already normalized.
-            scan_norm = torch.clamp(scan_hist, 0.0, 1.0)
-        else:
-            # scan_history is in meters.
-            scan_hist = torch.clamp(scan_hist, 0.0, self.scan_max_range)
-            scan_norm = scan_hist / self.scan_max_range
-
+        # Temporal motion per ray.
         scan_delta = scan_norm[:, :-1, :] - scan_norm[:, 1:, :]
         current_scan = scan_norm[:, -1:, :]
         min_scan = torch.min(scan_norm, dim=1, keepdim=True).values
-        closing_full = torch.clamp(scan_norm[:, 0:1, :] - scan_norm[:, -1:, :], -1.0, 1.0)
+
+        closing_full = torch.clamp(
+            scan_norm[:, 0:1, :] - scan_norm[:, -1:, :],
+            -1.0,
+            1.0,
+        )
+
+        # Spatial gradients help crossing obstacles that move across ray indices.
+        current = current_scan
+        current_left = torch.roll(current, shifts=1, dims=-1)
+        current_right = torch.roll(current, shifts=-1, dims=-1)
+
+        spatial_grad_left = torch.clamp(current - current_left, -1.0, 1.0)
+        spatial_grad_right = torch.clamp(current_right - current, -1.0, 1.0)
+
+        # Smaller range = nearer obstacle. This gives an explicit closeness signal.
+        near_score = 1.0 - current_scan
 
         ray_angles = torch.linspace(
             -math.pi,
@@ -275,6 +390,11 @@ class ScanHistoryTransformerActor(nn.Module):
 
         angle_feat = angle_feat.expand(batch_size, -1, -1)
 
+        path_alignment = self._path_ray_alignment(
+            path=path,
+            ray_angles=ray_angles,
+        )
+
         ray_features = torch.cat(
             [
                 scan_norm,
@@ -283,30 +403,62 @@ class ScanHistoryTransformerActor(nn.Module):
                 min_scan,
                 closing_full,
                 angle_feat,
+                path_alignment,
+                spatial_grad_left,
+                spatial_grad_right,
+                near_score,
             ],
             dim=1,
         )
 
         ray_features = ray_features.transpose(1, 2).contiguous()
 
-        ray_tokens = self.ray_proj(ray_features)
-        ray_tokens = ray_tokens + self.ray_pos_embed
-        ray_tokens = self.ray_transformer(ray_tokens)
-
-        scores = self.ray_score(ray_tokens)
-        weights = torch.softmax(scores, dim=1)
-
-        ray_attn_pool = torch.sum(weights * ray_tokens, dim=1)
-        ray_mean_pool = torch.mean(ray_tokens, dim=1)
-        ray_min_pool = torch.min(ray_tokens, dim=1).values
-
         path_feat = self.path_encoder(path)
         motion_feat = self.motion_encoder(motion)
+        context = torch.cat([path_feat, motion_feat], dim=-1)
+
+        ray_tokens = self.ray_proj(ray_features)
+        ray_tokens = ray_tokens + self.ray_pos_embed
+
+        # Inject path/motion into ray tokens before transformer.
+        gamma_beta = self.context_film(context)
+        gamma, beta = torch.chunk(gamma_beta, chunks=2, dim=-1)
+
+        gamma = torch.tanh(gamma).unsqueeze(1)
+        beta = beta.unsqueeze(1)
+
+        ray_tokens = ray_tokens * (1.0 + gamma) + beta
+
+        ray_tokens = self.ray_transformer(ray_tokens)
+
+        # Path-conditioned cross attention.
+        query = self.context_query(context).unsqueeze(1)
+
+        path_ray_pool, _ = self.path_ray_attention(
+            query=query,
+            key=ray_tokens,
+            value=ray_tokens,
+            need_weights=False,
+        )
+
+        path_ray_pool = path_ray_pool.squeeze(1)
+
+        # Learned path-conditioned ray pooling.
+        scores = self.ray_score(ray_tokens)
+        weights = torch.softmax(scores, dim=1)
+        ray_attn_pool = torch.sum(weights * ray_tokens, dim=1)
+
+        ray_mean_pool = torch.mean(ray_tokens, dim=1)
+
+        # Focused near-obstacle pool.
+        near_weights = torch.softmax(near_score.transpose(1, 2) * 8.0, dim=1)
+        ray_near_pool = torch.sum(near_weights * ray_tokens, dim=1)
 
         fused = torch.cat(
             [
+                path_ray_pool,
                 ray_attn_pool,
-                ray_min_pool,
+                ray_near_pool,
                 ray_mean_pool,
                 path_feat,
                 motion_feat,
@@ -325,7 +477,6 @@ class ScanHistoryTransformerActor(nn.Module):
         path_blocked_logits = self.aux_path_blocked_head(feature)
         dynamic_risk_logits = self.aux_dynamic_risk_head(feature)
         return path_blocked_logits, dynamic_risk_logits
-
 
 class ActorCriticScanTransformer(nn.Module):
     is_recurrent = False
@@ -376,6 +527,7 @@ class ActorCriticScanTransformer(nn.Module):
             nhead=4,
             num_layers=2,
             ff_dim=256,
+            scan_max_range=10.0,
         )
 
         self.critic = build_mlp(

@@ -13,6 +13,35 @@ NavRL Bench trains a PPO policy with a **ScanHistoryTransformerActor** from scra
 > Given a goal, the robot should avoid fast-moving obstacles and reach the goal safely.
 
 ---
+## Demo Videos
+
+<table>
+<tr>
+<td align="center">
+
+**Scenario 1**
+
+<video src="https://github.com/user-attachments/assets/9a30fd73-8a11-4826-9b1c-b1f284a6e100" controls width="320"></video>
+
+</td>
+<td align="center">
+
+**Scenario 2**
+
+<video src="https://github.com/user-attachments/assets/d883cb59-62cb-4328-8aa7-2c36251ee528" controls width="320"></video>
+
+</td>
+<td align="center">
+
+**Scenario 3**
+
+<video src="https://github.com/user-attachments/assets/78cb38ee-0746-4bb8-9f2d-af424923a461" controls width="320"></video>
+
+</td>
+</tr>
+</table>
+
+---
 
 ## Project Motivation
 
@@ -366,36 +395,6 @@ Training an RL policy in simulation is only the first step. Domain randomization
 - Robot mass variation, center-of-mass shift
 
 The policy is validated in simulation before real-robot testing. Key sim-to-real concerns include odometry drift, command latency, and ensuring the 1176-dim observation can be assembled correctly from live ROS 2 topics.
-
----
-
-## Demo Videos
-
-<table>
-<tr>
-<td align="center">
-
-**Scenario 12_4_4_2_2**
-
-<video src="training/dynamic_obstacle_avoidance/videos/12_4_4_2_2.mp4" controls width="320"></video>
-
-</td>
-<td align="center">
-
-**Scenario 12_6_6**
-
-<video src="training/dynamic_obstacle_avoidance/videos/12_6_6.mp4" controls width="320"></video>
-
-</td>
-<td align="center">
-
-**Scenario 6_2_2_1_1**
-
-<video src="training/dynamic_obstacle_avoidance/videos/6_2_2_1_1.mp4" controls width="320"></video>
-
-</td>
-</tr>
-</table>
 
 ---
 

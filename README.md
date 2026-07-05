@@ -369,6 +369,36 @@ The policy is validated in simulation before real-robot testing. Key sim-to-real
 
 ---
 
+## Demo Videos
+
+<table>
+<tr>
+<td align="center">
+
+**Scenario 12_4_4_2_2**
+
+<video src="training/dynamic_obstacle_avoidance/videos/12_4_4_2_2.mp4" controls width="320"></video>
+
+</td>
+<td align="center">
+
+**Scenario 12_6_6**
+
+<video src="training/dynamic_obstacle_avoidance/videos/12_6_6.mp4" controls width="320"></video>
+
+</td>
+<td align="center">
+
+**Scenario 6_2_2_1_1**
+
+<video src="training/dynamic_obstacle_avoidance/videos/6_2_2_1_1.mp4" controls width="320"></video>
+
+</td>
+</tr>
+</table>
+
+---
+
 ## Repository Structure
 
 ```text

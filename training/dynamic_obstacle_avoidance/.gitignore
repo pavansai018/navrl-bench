@@ -38,6 +38,9 @@ docker/.container.cfg
 **/output/*
 **/outputs/*
 **/videos/*
+!**/videos/12_4_4_2_2.mp4
+!**/videos/12_6_6.mp4
+!**/videos/6_2_2_1_1.mp4
 **/wandb/*
 **/.neptune/*
 docker/artifacts/

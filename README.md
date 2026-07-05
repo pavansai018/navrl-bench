@@ -13,6 +13,35 @@ NavRL Bench trains a PPO policy with a **ScanHistoryTransformerActor** from scra
 > Given a goal, the robot should avoid fast-moving obstacles and reach the goal safely.
 
 ---
+## Demo Videos
+
+<table>
+<tr>
+<td align="center">
+
+**Scenario 1**
+
+<video src="https://github.com/user-attachments/assets/9a30fd73-8a11-4826-9b1c-b1f284a6e100" controls width="320"></video>
+
+</td>
+<td align="center">
+
+**Scenario 2**
+
+<video src="https://github.com/user-attachments/assets/d883cb59-62cb-4328-8aa7-2c36251ee528" controls width="320"></video>
+
+</td>
+<td align="center">
+
+**Scenario 3**
+
+<video src="https://github.com/user-attachments/assets/78cb38ee-0746-4bb8-9f2d-af424923a461" controls width="320"></video>
+
+</td>
+</tr>
+</table>
+
+---
 
 ## Project Motivation
 
